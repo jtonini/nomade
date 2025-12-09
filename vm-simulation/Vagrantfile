@@ -1,0 +1,209 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+# NØMADE Test Cluster VM
+# 
+# Creates a single VM with SLURM configured to simulate
+# a multi-node HPC cluster with CPU and GPU nodes.
+#
+# Usage:
+#   vagrant up
+#   vagrant ssh
+#   sinfo  # View cluster status
+
+Vagrant.configure("2") do |config|
+  
+  # Ubuntu 22.04 LTS
+  # - For libvirt: use generic/ubuntu2204 (default)
+  # - For VirtualBox: change to ubuntu/jammy64
+  config.vm.box = "generic/ubuntu2204"
+  
+  config.vm.hostname = "nomade-test"
+  
+  # Network
+  config.vm.network "private_network", ip: "192.168.56.10"
+  
+  # Forward dashboard port
+  config.vm.network "forwarded_port", guest: 8080, host: 8080
+  
+  # VM Resources
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = "nomade-test-cluster"
+    vb.memory = 8192    # 8 GB RAM
+    vb.cpus = 4         # 4 CPUs
+    
+    # Better performance
+    vb.customize ["modifyvm", :id, "--ioapic", "on"]
+    vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
+  end
+  
+  # Alternative: libvirt provider
+  config.vm.provider "libvirt" do |lv|
+    lv.memory = 8192
+    lv.cpus = 4
+    # If using a custom storage pool (e.g., for SELinux/RHEL), uncomment:
+    # lv.storage_pool_name = "vm-pool"
+  end
+  
+  # Synced folder for NØMADE development
+  # Use rsync instead of NFS (more compatible)
+  config.vm.synced_folder "..", "/home/vagrant/nomade", type: "rsync",
+    rsync__exclude: [".git/", "*.tar.gz", "__pycache__/", "*.pyc", ".vagrant/"]
+  
+  # Provisioning
+  config.vm.provision "shell", inline: <<-SHELL
+    set -e
+    
+    echo "=========================================="
+    echo "NØMADE Test Cluster Setup"
+    echo "=========================================="
+    
+    # Update system
+    export DEBIAN_FRONTEND=noninteractive
+    
+    # Fix potential mirror issues - use main Ubuntu archive
+    sed -i 's|mirrors.edge.kernel.org|archive.ubuntu.com|g' /etc/apt/sources.list 2>/dev/null || true
+    
+    # Retry apt update up to 3 times (mirrors can be flaky)
+    for i in 1 2 3; do
+        apt-get update && break
+        echo "apt-get update failed, retry $i..."
+        sleep 5
+    done
+    
+    apt-get upgrade -y
+    
+    # Install dependencies
+    apt-get install -y \
+      build-essential \
+      git \
+      python3 \
+      python3-pip \
+      python3-venv \
+      munge \
+      slurm-wlm \
+      slurm-client \
+      mailutils \
+      vim \
+      htop \
+      tree
+    
+    echo "=========================================="
+    echo "Configuring MUNGE"
+    echo "=========================================="
+    
+    # Create munge key
+    dd if=/dev/urandom bs=1 count=1024 > /etc/munge/munge.key 2>/dev/null
+    chown munge:munge /etc/munge/munge.key
+    chmod 400 /etc/munge/munge.key
+    
+    # Start munge
+    systemctl enable munge
+    systemctl start munge
+    
+    echo "=========================================="
+    echo "Configuring SLURM"
+    echo "=========================================="
+    
+    # Create slurm user if not exists
+    id -u slurm &>/dev/null || useradd -r -s /bin/false slurm
+    
+    # Create directories
+    mkdir -p /var/spool/slurm/ctld
+    mkdir -p /var/spool/slurm/d
+    mkdir -p /var/log/slurm
+    mkdir -p /var/run/slurm
+    chown -R slurm:slurm /var/spool/slurm
+    chown -R slurm:slurm /var/log/slurm
+    chown -R slurm:slurm /var/run/slurm
+    
+    # Copy SLURM configuration
+    cp /home/vagrant/nomade/vm-simulation/slurm/slurm.conf /etc/slurm/slurm.conf
+    cp /home/vagrant/nomade/vm-simulation/slurm/cgroup.conf /etc/slurm/cgroup.conf
+    
+    # Set permissions
+    chown slurm:slurm /etc/slurm/*.conf
+    chmod 644 /etc/slurm/*.conf
+    
+    # Enable and start SLURM services
+    systemctl enable slurmctld
+    systemctl enable slurmd
+    systemctl start slurmctld
+    systemctl start slurmd
+    
+    # Wait for SLURM to start
+    sleep 3
+    
+    # Set nodes to idle
+    scontrol update nodename=cpu[01-03] state=idle
+    scontrol update nodename=gpu[01-02] state=idle
+    
+    echo "=========================================="
+    echo "Setting up Python environment"
+    echo "=========================================="
+    
+    # Create venv for NØMADE
+    python3 -m venv /home/vagrant/nomade-venv
+    chown -R vagrant:vagrant /home/vagrant/nomade-venv
+    
+    # Install NØMADE
+    sudo -u vagrant /home/vagrant/nomade-venv/bin/pip install --upgrade pip
+    sudo -u vagrant /home/vagrant/nomade-venv/bin/pip install -e /home/vagrant/nomade
+    
+    # Add to PATH
+    echo 'export PATH="/home/vagrant/nomade-venv/bin:$PATH"' >> /home/vagrant/.bashrc
+    
+    echo "=========================================="
+    echo "Creating test directories"
+    echo "=========================================="
+    
+    # Simulate cluster filesystem structure
+    mkdir -p /scratch
+    mkdir -p /project
+    mkdir -p /home/testuser
+    chmod 777 /scratch
+    chmod 755 /project
+    
+    # Create test user
+    id -u testuser &>/dev/null || useradd -m testuser
+    
+    echo "=========================================="
+    echo "Setup complete!"
+    echo "=========================================="
+    echo ""
+    echo "SLURM Status:"
+    sinfo
+    echo ""
+    echo "To use:"
+    echo "  vagrant ssh"
+    echo "  sinfo          # View cluster"
+    echo "  sbatch job.sh  # Submit job"
+    echo "  squeue         # View queue"
+    echo ""
+    
+  SHELL
+  
+  # Post-provision message
+  config.vm.post_up_message = <<-MESSAGE
+  
+  ╔══════════════════════════════════════════════════════════════╗
+  ║             NØMADE Test Cluster Ready!                       ║
+  ╠══════════════════════════════════════════════════════════════╣
+  ║                                                              ║
+  ║  SSH:        vagrant ssh                                     ║
+  ║  Dashboard:  http://localhost:8080                           ║
+  ║                                                              ║
+  ║  Cluster:                                                    ║
+  ║    - 3 CPU nodes (cpu01-03)                                  ║
+  ║    - 2 GPU nodes (gpu01-02)                                  ║
+  ║                                                              ║
+  ║  Quick test:                                                 ║
+  ║    sinfo                    # View nodes                     ║
+  ║    sbatch --wrap="hostname" # Submit test job                ║
+  ║    squeue                   # View queue                     ║
+  ║                                                              ║
+  ╚══════════════════════════════════════════════════════════════╝
+  
+  MESSAGE
+
+end

@@ -1,0 +1,13 @@
+# NØMADE Development Dependencies
+
+# Testing
+pytest>=7.0
+pytest-cov>=4.0
+
+# Linting and formatting
+ruff>=0.1
+black>=23.0
+mypy>=1.0
+
+# Pre-commit hooks
+pre-commit>=3.0

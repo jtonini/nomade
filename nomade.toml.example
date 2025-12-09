@@ -1,0 +1,338 @@
+# NØMADE Configuration File
+# Copy this file to nomade.toml and customize for your environment
+
+# ============================================
+# GENERAL SETTINGS
+# ============================================
+
+[general]
+# Name of this cluster (used in alerts and reports)
+cluster_name = "my-cluster"
+
+# Directory for NØMADE data (database, logs)
+data_dir = "/var/lib/nomade"
+
+# Log level: DEBUG, INFO, WARNING, ERROR
+log_level = "INFO"
+
+# Log file (empty for stdout only)
+log_file = "/var/log/nomade/nomade.log"
+
+# Daemon PID file
+pid_file = "/var/run/nomade/nomade.pid"
+
+# ============================================
+# COLLECTORS
+# ============================================
+
+[collectors]
+# Enable/disable individual collectors
+disk = true
+slurm = true
+nodes = true
+licenses = true
+jobs = true      # Requires SLURM prolog/epilog hooks
+network = false  # Optional network monitoring
+
+# Collection intervals (seconds)
+disk_interval = 300      # Every 5 minutes
+slurm_interval = 60      # Every minute
+nodes_interval = 120     # Every 2 minutes
+licenses_interval = 300  # Every 5 minutes
+network_interval = 60    # Every minute
+
+# ============================================
+# DISK COLLECTOR
+# ============================================
+
+[collectors.disk]
+# Filesystems to monitor
+filesystems = [
+    "/",
+    "/home",
+    "/scratch",
+    # "/project",
+]
+
+# Enable quota tracking
+quota_enabled = true
+
+# Command to get quota information
+# Options: "quota", "lfs quota" (Lustre), "custom"
+quota_backend = "quota"
+
+# For custom quota command
+# quota_command = "/usr/local/bin/get_quota.sh"
+
+# Derivative analysis settings
+derivative_window = 5        # Number of points for derivative calculation
+derivative_smoothing = 0.3   # Exponential smoothing factor (0-1)
+
+# Large file detection
+large_file_threshold_gb = 100
+scan_for_large_files = false  # Can be slow on large filesystems
+
+# ============================================
+# SLURM COLLECTOR
+# ============================================
+
+[collectors.slurm]
+# Path to SLURM commands (if not in PATH)
+# slurm_bin_path = "/usr/bin"
+
+# Partitions to monitor (empty = all)
+partitions = []
+
+# Job age limit for history queries (days)
+job_history_days = 30
+
+# Stuck job threshold (days)
+stuck_job_threshold_days = 7
+
+# Zombie process detection
+check_zombies = true
+
+# ============================================
+# NODE COLLECTOR
+# ============================================
+
+[collectors.nodes]
+# How to check node health
+# Options: "slurm" (sinfo only), "ssh" (SSH to each node)
+health_check_method = "slurm"
+
+# SSH settings (if health_check_method = "ssh")
+ssh_user = "root"
+ssh_timeout = 10
+ssh_parallel = 4
+
+# Temperature monitoring
+monitor_temperatures = true
+cpu_temp_warning = 80
+cpu_temp_critical = 90
+gpu_temp_warning = 83
+gpu_temp_critical = 90
+
+# NFS health check
+check_nfs_mounts = true
+nfs_mount_points = ["/home", "/scratch"]
+
+# Services to check (via systemctl)
+check_services = ["slurmd", "munge"]
+
+# ============================================
+# LICENSE COLLECTOR
+# ============================================
+
+[collectors.licenses]
+# License servers to monitor
+
+[[collectors.licenses.servers]]
+name = "matlab"
+type = "flexlm"           # flexlm, rlm, or custom
+host = "license.example.edu"
+port = 27000
+timeout = 10
+
+[[collectors.licenses.servers]]
+name = "gaussian"
+type = "flexlm"
+host = "license.example.edu"
+port = 27001
+
+# [[collectors.licenses.servers]]
+# name = "custom_software"
+# type = "custom"
+# command = "/usr/local/bin/check_license.sh"
+# parse_regex = "Available: (\\d+)/(\\d+)"
+
+# ============================================
+# JOB COLLECTOR
+# ============================================
+
+[collectors.jobs]
+# Job metrics are collected via SLURM prolog/epilog hooks
+# See scripts/prolog.sh and scripts/epilog.sh
+
+# Path where prolog/epilog write temporary data
+metrics_spool_dir = "/var/spool/nomade/jobs"
+
+# Sample job metrics during execution (requires periodic cron job)
+sample_during_job = false
+sample_interval = 300  # seconds
+
+# cgroup path for per-job metrics
+cgroup_path = "/sys/fs/cgroup"
+
+# GPU monitoring
+monitor_gpus = true
+nvidia_smi_path = "/usr/bin/nvidia-smi"
+
+# ============================================
+# ALERTS
+# ============================================
+
+[alerts]
+# Alert dispatch configuration
+
+# Email
+email_enabled = true
+email_to = ["hpc-admin@example.edu"]
+email_cc = []
+email_from = "nomade@cluster.example.edu"
+smtp_host = "smtp.example.edu"
+smtp_port = 25
+smtp_use_tls = false
+# smtp_username = ""
+# smtp_password = ""
+
+# Slack
+slack_enabled = false
+slack_webhook_url = ""
+slack_channel = "#hpc-alerts"
+
+# Generic webhook
+webhook_enabled = false
+webhook_url = ""
+webhook_headers = { Authorization = "Bearer TOKEN" }
+
+# Alert behavior
+# Minimum seconds between repeated alerts for the same issue
+default_cooldown = 3600
+
+# Aggregate multiple alerts into a single digest
+digest_enabled = false
+digest_interval = 3600
+
+# ============================================
+# ALERT THRESHOLDS
+# ============================================
+
+[alerts.thresholds]
+# Disk
+disk_warning_percent = 85
+disk_critical_percent = 95
+disk_fill_days_warning = 7    # Warn if disk will be full in N days
+
+# Queue
+queue_depth_warning = 100
+queue_depth_critical = 500
+queue_wait_warning_hours = 24
+
+# Nodes
+node_down_alert = true
+node_drain_alert = true
+
+# Licenses
+license_low_threshold = 3     # Alert when < N licenses available
+license_percent_warning = 90  # Alert when > N% licenses in use
+
+# Jobs
+job_stuck_days = 7
+job_health_warning = 0.4      # Alert when predicted health < threshold
+
+# ============================================
+# DERIVATIVE ALERT THRESHOLDS
+# ============================================
+
+[alerts.derivatives]
+# Disk acceleration (GB/day²)
+disk_acceleration_warning = 1.0
+disk_acceleration_critical = 5.0
+
+# Queue acceleration (jobs/hour²)
+queue_acceleration_warning = 5
+queue_acceleration_critical = 20
+
+# Failure rate acceleration
+failure_rate_acceleration_warning = 0.01  # 1% increase per day
+
+# NFS latency acceleration (ms/hour²)
+nfs_latency_acceleration_warning = 1.0
+
+# ============================================
+# PREDICTION ENGINE
+# ============================================
+
+[prediction]
+# Enable/disable prediction features
+enabled = true
+
+# Minimum jobs before training models
+min_jobs_for_training = 100
+
+# Similarity threshold for network edges
+similarity_threshold = 0.85
+
+# Health score threshold for success/failure classification
+health_threshold = 0.5
+
+# Model retraining interval (days)
+retrain_interval_days = 7
+
+# Maximum jobs to keep in similarity network
+max_network_jobs = 10000
+
+# Anomaly detection threshold (distance to nearest simulation)
+anomaly_distance_threshold = 0.15
+
+# ============================================
+# SIMULATION
+# ============================================
+
+[prediction.simulation]
+# Number of simulated jobs for coverage analysis
+n_simulated = 1000
+
+# Rerun simulation on this interval (days)
+simulation_interval_days = 7
+
+# Alert if coverage drops below threshold
+coverage_warning_percent = 90
+
+# ============================================
+# DASHBOARD
+# ============================================
+
+[dashboard]
+# Web dashboard settings
+enabled = true
+host = "0.0.0.0"
+port = 8080
+
+# Authentication (optional)
+auth_enabled = false
+# auth_users = { admin = "hashed_password" }
+
+# SSL (optional)
+ssl_enabled = false
+# ssl_cert = "/etc/ssl/certs/nomade.crt"
+# ssl_key = "/etc/ssl/private/nomade.key"
+
+# Real-time update interval (milliseconds)
+update_interval_ms = 5000
+
+# ============================================
+# DATA RETENTION
+# ============================================
+
+[retention]
+# How long to keep historical data
+
+# Filesystem snapshots
+filesystem_days = 365
+
+# Node metrics
+node_metrics_days = 90
+
+# Job data
+job_data_days = 365
+
+# Alerts
+alert_days = 180
+
+# Similarity edges (can be large)
+similarity_days = 90
+
+# Run cleanup on this schedule (cron format)
+cleanup_schedule = "0 3 * * *"  # 3 AM daily

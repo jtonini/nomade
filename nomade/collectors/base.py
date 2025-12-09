@@ -1,0 +1,310 @@
+"""
+NOMADE Base Collector Framework
+
+All collectors inherit from BaseCollector and implement the collect() method.
+The framework handles scheduling, error handling, logging, and database storage.
+"""
+
+import logging
+import sqlite3
+import time
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class CollectionResult:
+    """Result of a collection run."""
+    
+    collector_name: str
+    timestamp: datetime
+    success: bool
+    records_collected: int = 0
+    duration_seconds: float = 0.0
+    error_message: str | None = None
+    data: list[dict[str, Any]] = field(default_factory=list)
+    
+    def __repr__(self) -> str:
+        status = "✓" if self.success else "✗"
+        return (
+            f"CollectionResult({status} {self.collector_name}: "
+            f"{self.records_collected} records in {self.duration_seconds:.2f}s)"
+        )
+
+
+class BaseCollector(ABC):
+    """
+    Abstract base class for all NOMADE collectors.
+    
+    Subclasses must implement:
+        - collect() -> list[dict]: Gather data from the source
+        - store(data) -> None: Store data in the database
+    
+    The framework provides:
+        - Error handling and retry logic
+        - Logging
+        - Timing and metrics
+        - Database connection management
+    
+    Example:
+        class DiskCollector(BaseCollector):
+            name = "disk"
+            
+            def collect(self) -> list[dict]:
+                # Gather filesystem data
+                return [{'path': '/', 'used_percent': 50.0}]
+            
+            def store(self, data: list[dict]) -> None:
+                # Store in database
+                ...
+    """
+    
+    # Subclasses should override these
+    name: str = "base"
+    description: str = "Base collector"
+    default_interval: int = 300  # seconds
+    
+    def __init__(
+        self,
+        config: dict[str, Any],
+        db_path: Path | str,
+    ):
+        """
+        Initialize the collector.
+        
+        Args:
+            config: Collector-specific configuration dict
+            db_path: Path to SQLite database
+        """
+        self.config = config
+        self.db_path = Path(db_path)
+        self._last_run: datetime | None = None
+        self._consecutive_failures = 0
+        self._max_retries = config.get('max_retries', 3)
+        self._retry_delay = config.get('retry_delay', 5)  # seconds
+        
+        logger.info(f"Initialized {self.name} collector")
+    
+    @abstractmethod
+    def collect(self) -> list[dict[str, Any]]:
+        """
+        Collect data from the source.
+        
+        Returns:
+            List of dictionaries containing collected data.
+            Each dict should have keys matching the database schema.
+        
+        Raises:
+            CollectionError: If data collection fails.
+        """
+        pass
+    
+    @abstractmethod
+    def store(self, data: list[dict[str, Any]]) -> None:
+        """
+        Store collected data in the database.
+        
+        Args:
+            data: List of data dictionaries from collect()
+        """
+        pass
+    
+    def get_db_connection(self) -> sqlite3.Connection:
+        """Get a database connection with row factory."""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+    
+    def run(self) -> CollectionResult:
+        """
+        Execute a collection run with error handling and timing.
+        
+        Returns:
+            CollectionResult with success status and metrics.
+        """
+        start_time = time.time()
+        timestamp = datetime.now()
+        
+        logger.debug(f"Starting {self.name} collection")
+        
+        try:
+            # Collect data with retry logic
+            data = self._collect_with_retry()
+            
+            # Store data
+            if data:
+                self.store(data)
+            
+            duration = time.time() - start_time
+            self._last_run = timestamp
+            self._consecutive_failures = 0
+            
+            result = CollectionResult(
+                collector_name=self.name,
+                timestamp=timestamp,
+                success=True,
+                records_collected=len(data),
+                duration_seconds=duration,
+                data=data,
+            )
+            
+            logger.info(f"{self.name}: Collected {len(data)} records in {duration:.2f}s")
+            self._log_collection_run(result)
+            
+            return result
+            
+        except Exception as e:
+            duration = time.time() - start_time
+            self._consecutive_failures += 1
+            
+            result = CollectionResult(
+                collector_name=self.name,
+                timestamp=timestamp,
+                success=False,
+                duration_seconds=duration,
+                error_message=str(e),
+            )
+            
+            logger.error(f"{self.name}: Collection failed - {e}")
+            self._log_collection_run(result)
+            
+            return result
+    
+    def _collect_with_retry(self) -> list[dict[str, Any]]:
+        """Attempt collection with retries on failure."""
+        last_error = None
+        
+        for attempt in range(self._max_retries):
+            try:
+                return self.collect()
+            except Exception as e:
+                last_error = e
+                if attempt < self._max_retries - 1:
+                    logger.warning(
+                        f"{self.name}: Attempt {attempt + 1} failed, "
+                        f"retrying in {self._retry_delay}s: {e}"
+                    )
+                    time.sleep(self._retry_delay)
+        
+        raise CollectionError(
+            f"Collection failed after {self._max_retries} attempts: {last_error}"
+        )
+    
+    def _log_collection_run(self, result: CollectionResult) -> None:
+        """Log collection run to database."""
+        try:
+            with self.get_db_connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO collection_log 
+                    (collector, started_at, completed_at, success, records_collected, error_message)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        result.collector_name,
+                        result.timestamp.isoformat(),
+                        datetime.now().isoformat(),
+                        result.success,
+                        result.records_collected,
+                        result.error_message,
+                    )
+                )
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"Failed to log collection run: {e}")
+    
+    @property
+    def interval(self) -> int:
+        """Get collection interval from config or default."""
+        return self.config.get('interval', self.default_interval)
+    
+    @property
+    def enabled(self) -> bool:
+        """Check if collector is enabled in config."""
+        return self.config.get('enabled', True)
+    
+    @property
+    def last_run(self) -> datetime | None:
+        """Timestamp of last successful run."""
+        return self._last_run
+    
+    @property
+    def consecutive_failures(self) -> int:
+        """Number of consecutive failed runs."""
+        return self._consecutive_failures
+    
+    def should_run(self) -> bool:
+        """Check if collector should run based on interval."""
+        if not self.enabled:
+            return False
+        if self._last_run is None:
+            return True
+        elapsed = (datetime.now() - self._last_run).total_seconds()
+        return elapsed >= self.interval
+
+
+class CollectionError(Exception):
+    """Raised when data collection fails."""
+    pass
+
+
+class CollectorRegistry:
+    """Registry of available collectors."""
+    
+    def __init__(self):
+        self._collectors: dict[str, type[BaseCollector]] = {}
+    
+    def register(self, collector_class: type[BaseCollector]) -> type[BaseCollector]:
+        """
+        Register a collector class.
+        
+        Can be used as a decorator:
+            @registry.register
+            class MyCollector(BaseCollector):
+                ...
+        """
+        self._collectors[collector_class.name] = collector_class
+        logger.debug(f"Registered collector: {collector_class.name}")
+        return collector_class
+    
+    def get(self, name: str) -> type[BaseCollector] | None:
+        """Get a collector class by name."""
+        return self._collectors.get(name)
+    
+    def list_collectors(self) -> list[str]:
+        """List all registered collector names."""
+        return list(self._collectors.keys())
+    
+    def create(
+        self,
+        name: str,
+        config: dict[str, Any],
+        db_path: Path | str,
+    ) -> BaseCollector:
+        """
+        Create a collector instance by name.
+        
+        Args:
+            name: Collector name
+            config: Collector configuration
+            db_path: Database path
+            
+        Returns:
+            Configured collector instance
+            
+        Raises:
+            ValueError: If collector name not found
+        """
+        collector_class = self.get(name)
+        if collector_class is None:
+            raise ValueError(f"Unknown collector: {name}")
+        return collector_class(config, db_path)
+
+
+# Global registry
+registry = CollectorRegistry()

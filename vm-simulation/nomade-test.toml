@@ -1,0 +1,58 @@
+# NOMADE Configuration for Test VM
+[general]
+cluster_name = "nomade-test"
+data_dir = "/var/lib/nomade"
+log_level = "DEBUG"
+
+[collectors]
+# Intervals in seconds
+disk_interval = 60
+slurm_interval = 30
+nodes_interval = 60
+
+[collectors.disk]
+enabled = true
+filesystems = [
+    "/",
+    "/home",
+    "/localscratch",
+    "/tmp",
+]
+quota_enabled = false
+use_shutil = true
+
+[collectors.slurm]
+enabled = true
+partitions = ["standard", "highmem", "gpu", "debug"]
+job_history_days = 7
+
+[collectors.nodes]
+enabled = true
+health_check_method = "slurm"
+monitor_temperatures = false
+
+[alerts]
+email_enabled = false
+slack_enabled = false
+
+[alerts.thresholds]
+disk_warning_percent = 70
+disk_critical_percent = 85
+
+[alerts.derivatives]
+disk_velocity_warning = 0.5    # %/second
+disk_velocity_critical = 2.0
+disk_acceleration_warning = 0.1
+disk_acceleration_critical = 0.5
+
+[prediction]
+enabled = true
+min_jobs_for_training = 20
+similarity_threshold = 0.85
+health_threshold = 0.5
+retrain_interval_days = 1
+
+[dashboard]
+enabled = true
+host = "0.0.0.0"
+port = 8080

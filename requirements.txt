@@ -1,0 +1,14 @@
+# NØMADE Core Dependencies
+
+# CLI and configuration
+click>=8.0
+toml>=0.10
+rich>=13.0
+
+# Analysis
+numpy>=1.21
+pandas>=1.3
+scipy>=1.7
+
+# Testing (install with: pip install -r requirements.txt -r requirements-dev.txt)
+# See requirements-dev.txt for development dependencies
