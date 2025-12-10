@@ -12,6 +12,7 @@ from .base import (
     registry,
 )
 from .disk import DiskCollector
+from .slurm import SlurmCollector
 
 __all__ = [
     'BaseCollector',
@@ -20,4 +21,5 @@ __all__ = [
     'CollectorRegistry',
     'registry',
     'DiskCollector',
+    'SlurmCollector',
 ]
