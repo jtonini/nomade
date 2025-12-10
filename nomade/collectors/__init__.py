@@ -13,6 +13,7 @@ from .base import (
 )
 from .disk import DiskCollector
 from .slurm import SlurmCollector
+from .job_metrics import JobMetricsCollector
 
 __all__ = [
     'BaseCollector',
@@ -22,4 +23,5 @@ __all__ = [
     'registry',
     'DiskCollector',
     'SlurmCollector',
+    'JobMetricsCollector',
 ]
