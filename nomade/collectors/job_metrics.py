@@ -134,7 +134,7 @@ class JobMetricsCollector(BaseCollector):
     SACCT_FORMAT = (
         "JobID,JobName,User,Group,Partition,State,ExitCode,"
         "Submit,Start,End,Elapsed,Timelimit,"
-        "ReqCPUS,ReqMem,ReqGRES,"
+        "ReqCPUS,ReqMem,ReqTRES,"
         "AveCPU,MaxRSS,AveRSS,MaxVMSize,"
         "MaxDiskRead,MaxDiskWrite,AveDiskRead,AveDiskWrite"
     )
@@ -440,20 +440,21 @@ class JobMetricsCollector(BaseCollector):
             return None
     
     def _parse_gpus(self, value: str) -> int:
-        """Parse GPU request."""
+        """Parse GPU request from ReqTRES format (e.g., 'gres/gpu=2' or 'gres/gpu:a100=2')."""
         try:
             value = value.strip()
             if not value or value in ('', 'N/A'):
                 return 0
             
-            # Format: gpu:N or gres/gpu:N
+            # ReqTRES format: cpu=4,mem=8G,gres/gpu=2 or gres/gpu:type=N
             if 'gpu' in value.lower():
-                parts = value.split(':')
-                for p in reversed(parts):
-                    try:
-                        return int(p)
-                    except ValueError:
-                        continue
+                # Find gpu part
+                for part in value.split(','):
+                    if 'gpu' in part.lower():
+                        # Extract number after =
+                        if '=' in part:
+                            num = part.split('=')[-1]
+                            return int(num)
             return 0
         except ValueError:
             return 0
