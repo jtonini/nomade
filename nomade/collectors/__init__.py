@@ -14,6 +14,8 @@ from .base import (
 from .disk import DiskCollector
 from .slurm import SlurmCollector
 from .job_metrics import JobMetricsCollector
+from .iostat import IOStatCollector
+from .mpstat import MPStatCollector
 
 __all__ = [
     'BaseCollector',
@@ -24,4 +26,6 @@ __all__ = [
     'DiskCollector',
     'SlurmCollector',
     'JobMetricsCollector',
+    'IOStatCollector',
+    'MPStatCollector',
 ]

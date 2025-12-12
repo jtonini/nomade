@@ -146,6 +146,27 @@ nmonitor() {
     nomade monitor "$@"
 }
 
+# Similarity analysis
+nsimilarity() {
+    if [[ "$1" == "-h" || "$1" == "--help" || "$1" == "help" ]]; then
+        echo -e "${_BOLD}nsimilarity${_NC} - Analyze job similarity and clustering"
+        echo ""
+        echo "Usage: nsimilarity [options]"
+        echo ""
+        echo "Options:"
+        echo "  --min-samples N    Min I/O samples per job (default: 3)"
+        echo "  --find-similar ID  Find jobs similar to this job ID"
+        echo "  --export FILE      Export JSON for 3D visualization"
+        echo ""
+        echo "Examples:"
+        echo "  nsimilarity"
+        echo "  nsimilarity --find-similar 627"
+        echo "  nsimilarity --export viz-data.json"
+        return 0
+    fi
+    nomade similarity "$@"
+}
+
 # Tail collection log
 nlog() {
     if [[ "$1" == "-h" || "$1" == "--help" || "$1" == "help" ]]; then
@@ -234,6 +255,7 @@ nhelp() {
     echo -e "${_GREEN}Analysis:${_NC}"
     echo "  ndisk PATH  - Analyze filesystem trends"
     echo "  njobs       - Show recent job history"
+    echo "  nsimilarity - Analyze job similarity and clustering"
     echo "  nalerts     - View alerts"
     echo ""
     echo -e "${_GREEN}Operations:${_NC}"

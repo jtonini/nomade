@@ -26,6 +26,8 @@ from nomade.collectors.base import registry
 from nomade.collectors.disk import DiskCollector
 from nomade.collectors.slurm import SlurmCollector
 from nomade.collectors.job_metrics import JobMetricsCollector
+from nomade.collectors.iostat import IOStatCollector
+from nomade.collectors.mpstat import MPStatCollector
 from nomade.analysis.derivatives import (
     DerivativeAnalyzer,
     analyze_disk_trend,
@@ -125,6 +127,18 @@ def collect(ctx: click.Context, collector: tuple, once: bool, interval: int, db:
     if not collector or 'job_metrics' in collector:
         if job_metrics_config.get('enabled', True):
             collectors.append(JobMetricsCollector(job_metrics_config, db_path))
+    
+    # IOStat collector
+    iostat_config = config.get('collectors', {}).get('iostat', {})
+    if not collector or 'iostat' in collector:
+        if iostat_config.get('enabled', True):
+            collectors.append(IOStatCollector(iostat_config, db_path))
+    
+    # MPStat collector
+    mpstat_config = config.get('collectors', {}).get('mpstat', {})
+    if not collector or 'mpstat' in collector:
+        if mpstat_config.get('enabled', True):
+            collectors.append(MPStatCollector(mpstat_config, db_path))
     
     if not collectors:
         raise click.ClickException("No collectors enabled")
@@ -340,6 +354,85 @@ def status(ctx: click.Context, db: str) -> None:
     
     click.echo()
     
+    # I/O status (from iostat)
+    click.echo(click.style("I/O:", bold=True))
+    try:
+        iostat_row = conn.execute(
+            """
+            SELECT iowait_percent, user_percent, system_percent, idle_percent, timestamp
+            FROM iostat_cpu
+            ORDER BY timestamp DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        
+        if iostat_row:
+            iowait = iostat_row['iowait_percent']
+            iowait_color = 'green' if iowait < 10 else 'yellow' if iowait < 30 else 'red'
+            click.echo(f"  CPU iowait:    {click.style(f'{iowait:.1f}%', fg=iowait_color)}")
+            click.echo(f"  CPU user/sys:  {iostat_row['user_percent']:.1f}% / {iostat_row['system_percent']:.1f}%")
+            
+            # Device utilization
+            device_rows = conn.execute(
+                """
+                SELECT device, util_percent, write_kb_per_sec, write_await_ms
+                FROM iostat_device
+                WHERE timestamp = (SELECT MAX(timestamp) FROM iostat_device)
+                  AND device NOT LIKE 'loop%'
+                  AND device NOT LIKE 'dm-%'
+                ORDER BY util_percent DESC
+                LIMIT 3
+                """
+            ).fetchall()
+            
+            for dev in device_rows:
+                util = dev['util_percent']
+                util_color = 'green' if util < 50 else 'yellow' if util < 80 else 'red'
+                click.echo(f"  {dev['device']:<12} util: {click.style(f'{util:.1f}%', fg=util_color):<8} write: {dev['write_kb_per_sec']:.0f} KB/s  latency: {dev['write_await_ms']:.1f}ms")
+        else:
+            click.echo("  No iostat data (run: nomade collect -C iostat --once)")
+    except sqlite3.OperationalError:
+        click.echo("  No iostat data (table not created yet)")
+    
+    click.echo()
+    
+    # CPU Core status (from mpstat)
+    click.echo(click.style("CPU Cores:", bold=True))
+    try:
+        mpstat_row = conn.execute(
+            """
+            SELECT num_cores, avg_busy_percent, max_busy_percent, min_busy_percent,
+                   std_busy_percent, busy_spread, imbalance_ratio, 
+                   cores_idle, cores_saturated, timestamp
+            FROM mpstat_summary
+            ORDER BY timestamp DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        
+        if mpstat_row:
+            avg_busy = mpstat_row['avg_busy_percent']
+            busy_color = 'green' if avg_busy < 50 else 'yellow' if avg_busy < 80 else 'red'
+            
+            imbalance = mpstat_row['imbalance_ratio']
+            imbalance_color = 'green' if imbalance < 0.3 else 'yellow' if imbalance < 0.6 else 'red'
+            
+            click.echo(f"  Cores:         {mpstat_row['num_cores']}")
+            click.echo(f"  Avg busy:      {click.style(f'{avg_busy:.1f}%', fg=busy_color)}")
+            click.echo(f"  Range:         {mpstat_row['min_busy_percent']:.1f}% - {mpstat_row['max_busy_percent']:.1f}% (spread: {mpstat_row['busy_spread']:.1f}%)")
+            click.echo(f"  Imbalance:     {click.style(f'{imbalance:.2f}', fg=imbalance_color)} (std/avg)")
+            
+            if mpstat_row['cores_idle'] > 0:
+                click.echo(f"  Idle cores:    {click.style(str(mpstat_row['cores_idle']), fg='cyan')} (<5% busy)")
+            if mpstat_row['cores_saturated'] > 0:
+                click.echo(f"  Saturated:     {click.style(str(mpstat_row['cores_saturated']), fg='red')} (>95% busy)")
+        else:
+            click.echo("  No mpstat data (run: nomade collect -C mpstat --once)")
+    except sqlite3.OperationalError:
+        click.echo("  No mpstat data (table not created yet)")
+    
+    click.echo()
+    
     # Recent collection stats
     click.echo(click.style("Collection:", bold=True))
     collection_rows = conn.execute(
@@ -472,6 +565,55 @@ def monitor(ctx: click.Context, interval: int, once: bool,
 
 
 @cli.command()
+@click.option('--min-samples', type=int, default=3, help='Min I/O samples per job')
+@click.option('--export', type=click.Path(), help='Export JSON for visualization')
+@click.option('--find-similar', type=str, help='Find jobs similar to this job ID')
+@click.option('--db', type=click.Path(), help='Database path override')
+@click.pass_context
+def similarity(ctx: click.Context, min_samples: int, export: str, 
+               find_similar: str, db: str) -> None:
+    """Analyze job similarity and clustering.
+    
+    Computes similarity matrix using enriched feature vectors
+    from both sacct metrics and real-time I/O monitoring.
+    """
+    from nomade.analysis.similarity import SimilarityAnalyzer
+    
+    config = ctx.obj['config']
+    
+    if db:
+        db_path = Path(db)
+    else:
+        db_path = get_db_path(config)
+    
+    analyzer = SimilarityAnalyzer(str(db_path))
+    
+    if find_similar:
+        features = analyzer.get_enriched_features(min_samples)
+        sim_matrix, job_ids = analyzer.compute_similarity_matrix(features)
+        similar = analyzer.find_similar_jobs(find_similar, features, sim_matrix)
+        
+        click.echo(f"\nJobs similar to {find_similar}:")
+        for job_id, score in similar:
+            bar = "█" * int(score * 20)
+            click.echo(f"  {job_id}: {bar} {score:.3f}")
+    
+    elif export:
+        import json
+        features = analyzer.get_enriched_features(min_samples)
+        sim_matrix, job_ids = analyzer.compute_similarity_matrix(features)
+        clusters = analyzer.cluster_jobs(sim_matrix, job_ids)
+        data = analyzer.export_for_visualization(features, sim_matrix, clusters)
+        
+        with open(export, 'w') as f:
+            json.dump(data, f, indent=2)
+        click.echo(f"Exported {len(data['nodes'])} nodes, {len(data['edges'])} edges to {export}")
+    
+    else:
+        click.echo(analyzer.summary_report())
+
+
+@cli.command()
 @click.pass_context
 def syscheck(ctx: click.Context) -> None:
     """Check system requirements and configuration.
@@ -553,6 +695,31 @@ def syscheck(ctx: click.Context) -> None:
                 errors += 1
     except Exception:
         pass
+    
+    click.echo()
+    
+    # System tools check
+    click.echo(click.style("System Tools:", bold=True))
+    
+    if shutil.which('iostat'):
+        click.echo(f"  {click.style('✓', fg='green')} iostat available")
+    else:
+        click.echo(f"  {click.style('⚠', fg='yellow')} iostat not found (install sysstat package)")
+        click.echo(f"    → apt install sysstat  OR  yum install sysstat")
+        warnings += 1
+    
+    if shutil.which('mpstat'):
+        click.echo(f"  {click.style('✓', fg='green')} mpstat available")
+    else:
+        click.echo(f"  {click.style('⚠', fg='yellow')} mpstat not found (install sysstat package)")
+        click.echo(f"    → apt install sysstat  OR  yum install sysstat")
+        warnings += 1
+    
+    if Path('/proc/1/io').exists():
+        click.echo(f"  {click.style('✓', fg='green')} /proc/[pid]/io accessible")
+    else:
+        click.echo(f"  {click.style('⚠', fg='yellow')} /proc/[pid]/io not accessible (job I/O monitoring limited)")
+        warnings += 1
     
     click.echo()
     

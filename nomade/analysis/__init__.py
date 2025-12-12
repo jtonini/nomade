@@ -1,7 +1,7 @@
 """
-NOMADE Analysis
+NØMADE Analysis
 
-Time series analysis and derivative calculations.
+Time series analysis, derivatives, and similarity computations.
 """
 
 from .derivatives import (
@@ -12,6 +12,10 @@ from .derivatives import (
     analyze_disk_trend,
     analyze_queue_trend,
 )
+from .similarity import (
+    JobFeatures,
+    SimilarityAnalyzer,
+)
 
 __all__ = [
     'AlertLevel',
@@ -20,4 +24,6 @@ __all__ = [
     'Trend',
     'analyze_disk_trend',
     'analyze_queue_trend',
+    'JobFeatures',
+    'SimilarityAnalyzer',
 ]
