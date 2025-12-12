@@ -549,12 +549,14 @@ def status(ctx: click.Context, db: str) -> None:
             for gpu in gpu_rows:
                 util = gpu['gpu_util_percent']
                 util_color = 'green' if util < 50 else 'yellow' if util < 80 else 'red'
-                temp_color = 'green' if gpu['temperature_c'] < 70 else 'yellow' if gpu['temperature_c'] < 85 else 'red'
+                temp = gpu['temperature_c']
+                temp_color = 'green' if temp < 70 else 'yellow' if temp < 85 else 'red'
                 
                 mem_pct = (gpu['memory_used_mb'] / gpu['memory_total_mb'] * 100) if gpu['memory_total_mb'] else 0
+                power = gpu['power_draw_w']
                 
                 click.echo(f"  GPU {gpu['gpu_index']}: {gpu['gpu_name']}")
-                click.echo(f"    Util: {click.style(f'{util:.0f}%', fg=util_color)}  Mem: {mem_pct:.0f}%  Temp: {click.style(f'{gpu['temperature_c']}°C', fg=temp_color)}  Power: {gpu['power_draw_w']:.0f}W")
+                click.echo(f"    Util: {click.style(f'{util:.0f}%', fg=util_color)}  Mem: {mem_pct:.0f}%  Temp: {click.style(f'{temp}°C', fg=temp_color)}  Power: {power:.0f}W")
             click.echo()
     except sqlite3.OperationalError:
         pass  # No GPU table - skip silently
