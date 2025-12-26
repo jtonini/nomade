@@ -258,7 +258,7 @@ if HAS_TORCH:
         
         # Class weights (sqrt dampened for balance)
         class_counts = torch.bincount(y, minlength=8).float().clamp(min=1)
-        class_weights = 1.0 / torch.sqrt(class_counts)
+        class_weights = 1.0 / (class_counts ** 0.6)  # Balanced weighting
         class_weights = class_weights / class_weights.sum() * len(class_weights)
         
         return Data(
@@ -367,7 +367,7 @@ if __name__ == '__main__':
         data.val_mask[perm[350:425]] = True
         
         class_counts = torch.bincount(y, minlength=8).float().clamp(min=1)
-        data.class_weights = 1.0 / torch.sqrt(class_counts)
+        data.class_weights = 1.0 / (class_counts ** 0.6)  # Balanced weighting
         
         model = FailureGNN(input_dim=n_features, hidden_dim=32, conv_type='sage')
         trainer = GNNTrainer(model, gamma=2.0)

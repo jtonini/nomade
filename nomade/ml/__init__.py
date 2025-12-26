@@ -2,55 +2,43 @@
 NØMADE Machine Learning Module
 
 - GNN: What fails (network structure)
-- LSTM: When it fails (temporal patterns)  
+- LSTM: When it fails (temporal patterns)
 - Autoencoder: Is this normal (anomaly detection)
+- Ensemble: Combined prediction
 """
 
 from .gnn import (
-    SimpleGNN,
-    GNNConfig,
-    prepare_job_features,
-    build_adjacency_from_edges,
-    evaluate_gnn,
-    FAILURE_NAMES
+    SimpleGNN, GNNConfig, prepare_job_features,
+    build_adjacency_from_edges, evaluate_gnn, FAILURE_NAMES
 )
 
 try:
     from .gnn_torch import (
-        is_torch_available,
-        FocalLoss,
-        FailureGNN,
-        GNNTrainer,
-        train_failure_gnn,
-        prepare_pyg_data
+        is_torch_available, FocalLoss, FailureGNN, GNNTrainer,
+        train_failure_gnn, prepare_pyg_data
     )
     from .lstm import (
-        FailureLSTM,
-        LSTMTrainer,
-        train_failure_lstm,
-        JobTrajectoryDataset,
-        generate_synthetic_trajectories
+        FailureLSTM, LSTMTrainer, train_failure_lstm,
+        JobTrajectoryDataset, generate_synthetic_trajectories
     )
     from .autoencoder import (
-        JobAutoencoder,
-        AutoencoderTrainer,
-        train_anomaly_detector,
+        JobAutoencoder, AutoencoderTrainer, train_anomaly_detector,
         prepare_autoencoder_data
+    )
+    from .ensemble import (
+        FailureEnsemble, train_ensemble
     )
 except ImportError:
     is_torch_available = lambda: False
 
 __all__ = [
-    # Pure Python
     'SimpleGNN', 'GNNConfig', 'prepare_job_features',
     'build_adjacency_from_edges', 'evaluate_gnn', 'FAILURE_NAMES',
-    # PyTorch GNN
     'is_torch_available', 'FocalLoss', 'FailureGNN', 'GNNTrainer',
     'train_failure_gnn', 'prepare_pyg_data',
-    # LSTM
     'FailureLSTM', 'LSTMTrainer', 'train_failure_lstm',
     'JobTrajectoryDataset', 'generate_synthetic_trajectories',
-    # Autoencoder
     'JobAutoencoder', 'AutoencoderTrainer', 'train_anomaly_detector',
-    'prepare_autoencoder_data'
+    'prepare_autoencoder_data',
+    'FailureEnsemble', 'train_ensemble'
 ]
