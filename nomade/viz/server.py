@@ -2904,6 +2904,7 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
             const [showMethod, setShowMethod] = useState(false);
             const [showClustering, setShowClustering] = useState(false);
             const [showML, setShowML] = useState(false);
+            const [mlTraining, setMlTraining] = useState(false);
             const [forceIterations, setForceIterations] = useState(0);
             const forcePositionsRef = useRef(null);
             const animationRef = useRef(null);
@@ -4144,6 +4145,82 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
                                 </div>
                             </div>
                         )}
+                        {showML && mlPredictions && (
+                            <div style={{
+                                position: "absolute",
+                                top: "60px",
+                                left: "16px",
+                                background: "var(--bg-elevated)",
+                                border: "1px solid var(--border)",
+                                borderRadius: "8px",
+                                padding: "16px",
+                                fontSize: "11px",
+                                maxWidth: "400px",
+                                maxHeight: "500px",
+                                overflowY: "auto"
+                            }}>
+                                <div style={{ fontWeight: "600", marginBottom: "12px", color: "#e74c3c", fontSize: "12px" }}>
+                                    ⚠️ ML RISK ANALYSIS
+                                </div>
+                                <div style={{ marginBottom: "12px", color: "var(--text-muted)", fontSize: "10px" }}>
+                                    Status: {mlPredictions.status} | Anomalies: {mlPredictions.n_anomalies || 0} / {mlPredictions.n_jobs || 0}
+                                    <button
+                                        onClick={() => {
+                                            setMlTraining(true);
+                                            fetch("/api/train_ml").then(r => r.json()).then(data => {
+                                                setMlTraining(false);
+                                                window.location.reload();
+                                            });
+                                        }}
+                                        disabled={mlTraining}
+                                        style={{
+                                            marginLeft: "10px",
+                                            padding: "4px 8px",
+                                            fontSize: "9px",
+                                            background: mlTraining ? "#666" : "#27ae60",
+                                            color: "white",
+                                            border: "none",
+                                            borderRadius: "4px",
+                                            cursor: mlTraining ? "wait" : "pointer"
+                                        }}
+                                    >
+                                        {mlTraining ? "Training..." : "🔄 Update Models"}
+                                    </button>
+                                </div>
+                                {mlPredictions.summary && (
+                                    <div style={{ background: "var(--bg-hover)", borderRadius: "6px", padding: "10px", marginBottom: "10px" }}>
+                                        <div style={{ fontWeight: "600", marginBottom: "6px", color: "var(--text-muted)" }}>Model Performance</div>
+                                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px", fontSize: "10px" }}>
+                                            <span>GNN Accuracy:</span><span style={{ fontFamily: "monospace" }}>{((mlPredictions.summary.gnn_accuracy || 0) * 100).toFixed(1)}%</span>
+                                            <span>LSTM Accuracy:</span><span style={{ fontFamily: "monospace" }}>{((mlPredictions.summary.lstm_accuracy || 0) * 100).toFixed(1)}%</span>
+                                            <span>AE Precision:</span><span style={{ fontFamily: "monospace" }}>{((mlPredictions.summary.ae_precision || 0) * 100).toFixed(1)}%</span>
+                                            <span>AE Recall:</span><span style={{ fontFamily: "monospace" }}>{((mlPredictions.summary.ae_recall || 0) * 100).toFixed(1)}%</span>
+                                        </div>
+                                    </div>
+                                )}
+                                <div style={{ fontWeight: "600", marginBottom: "8px", color: "var(--text-muted)" }}>High-Risk Jobs (Top 10)</div>
+                                {(mlPredictions.high_risk || []).slice(0, 10).map((job, i) => (
+                                    <div key={i} style={{
+                                        background: job.is_anomaly ? "rgba(231, 76, 60, 0.1)" : "var(--bg-hover)",
+                                        borderRadius: "4px",
+                                        padding: "8px",
+                                        marginBottom: "6px",
+                                        borderLeft: job.is_anomaly ? "3px solid #e74c3c" : "3px solid var(--border)"
+                                    }}>
+                                        <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                            <span style={{ fontFamily: "monospace" }}>Job {job.job_id}</span>
+                                            <span style={{ color: "#e74c3c", fontFamily: "monospace" }}>
+                                                {job.anomaly_score?.toFixed(2) || "—"}
+                                            </span>
+                                        </div>
+                                        <div style={{ fontSize: "9px", color: "var(--text-muted)", marginTop: "2px" }}>
+                                            {job.is_anomaly ? "🔴 Anomaly" : ""}
+                                            {job.failure_reason > 0 ? ` | Failure: ${job.predicted_name || job.failure_reason}` : ""}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                         
                         <div className="network-stats">
                             <div className="network-stat">
@@ -4259,6 +4336,23 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             dm = DashboardHandler.data_manager
             predictions = dm.ml_predictions or {"status": "not_trained", "high_risk": []}
             self.wfile.write(json.dumps(predictions).encode())
+        elif parsed.path == "/api/train_ml":
+            # Train ML models endpoint
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            try:
+                dm = DashboardHandler.data_manager
+                if dm.db_path:
+                    from nomade.ml import train_and_save_ensemble, load_predictions_from_db
+                    result = train_and_save_ensemble(str(dm.db_path), epochs=50, verbose=False)
+                    dm._ml_predictions = load_predictions_from_db(str(dm.db_path))
+                    self.wfile.write(json.dumps({"status": "trained", "prediction_id": result.get("prediction_id")}).encode())
+                else:
+                    self.wfile.write(json.dumps({"status": "error", "message": "No database"}).encode())
+            except Exception as e:
+                self.wfile.write(json.dumps({"status": "error", "message": str(e)}).encode())
         elif parsed.path == '/api/refresh':
             DashboardHandler.data_manager.refresh()
             self.send_response(200)
