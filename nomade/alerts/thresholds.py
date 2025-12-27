@@ -255,3 +255,171 @@ def check_and_alert(collector_name: str, data: list[dict], config: dict, host: s
     """
     checker = ThresholdChecker(config)
     return checker.check(collector_name, data, host)
+
+
+class PredictiveChecker:
+    """
+    Predictive alerts using derivative analysis.
+    
+    Instead of just threshold alerts (disk > 95%), this predicts
+    when resources will be exhausted and alerts early.
+    """
+    
+    def __init__(self, config: dict):
+        self.config = config.get('alerts', {}).get('predictive', {})
+        self.enabled = self.config.get('enabled', True)
+        
+        # Default predictive thresholds
+        self.days_warning = self.config.get('days_until_full_warning', 7)
+        self.days_critical = self.config.get('days_until_full_critical', 1)
+        self.accel_warning = self.config.get('acceleration_warning', 0.05)
+        self.accel_critical = self.config.get('acceleration_critical', 0.10)
+    
+    def check_disk_trend(
+        self, 
+        history: list[dict], 
+        limit_bytes: int,
+        host: str = None,
+        path: str = None
+    ) -> Optional[dict]:
+        """
+        Check disk usage trend and alert if approaching full.
+        
+        Args:
+            history: List of {'timestamp': datetime, 'used_bytes': int}
+            limit_bytes: Total disk capacity
+            host: Hostname for alerts
+            path: Filesystem path
+        
+        Returns:
+            Alert dict if triggered, None otherwise
+        """
+        if not self.enabled or len(history) < 3:
+            return None
+        
+        try:
+            from nomade.analysis.derivatives import analyze_disk_trend, AlertLevel
+            
+            analysis = analyze_disk_trend(history, limit_bytes=limit_bytes)
+            
+            alert = None
+            
+            # Check days until full
+            if analysis.days_until_limit is not None:
+                if analysis.days_until_limit <= self.days_critical:
+                    alert = self._create_alert(
+                        severity='critical',
+                        source='disk_prediction',
+                        host=host,
+                        message=f"Disk {path or 'unknown'} will be FULL in {analysis.days_until_limit:.1f} days!",
+                        details={
+                            'path': path,
+                            'days_until_full': analysis.days_until_limit,
+                            'current_value': analysis.current_value,
+                            'rate_per_day': analysis.first_derivative * 86400 if analysis.first_derivative else None,
+                            'trend': analysis.trend.value
+                        }
+                    )
+                elif analysis.days_until_limit <= self.days_warning:
+                    alert = self._create_alert(
+                        severity='warning',
+                        source='disk_prediction',
+                        host=host,
+                        message=f"Disk {path or 'unknown'} will be full in {analysis.days_until_limit:.1f} days",
+                        details={
+                            'path': path,
+                            'days_until_full': analysis.days_until_limit,
+                            'current_value': analysis.current_value,
+                            'rate_per_day': analysis.first_derivative * 86400 if analysis.first_derivative else None,
+                            'trend': analysis.trend.value
+                        }
+                    )
+            
+            # Check acceleration (accelerating growth is dangerous)
+            if not alert and analysis.second_derivative is not None:
+                d2_per_day = analysis.second_derivative * 86400 * 86400  # per day²
+                
+                if analysis.first_derivative and analysis.first_derivative > 0:
+                    d1_per_day = analysis.first_derivative * 86400
+                    accel_ratio = abs(d2_per_day) / (abs(d1_per_day) + 0.001)
+                    
+                    if d2_per_day > 0 and accel_ratio > self.accel_critical:
+                        alert = self._create_alert(
+                            severity='critical',
+                            source='disk_prediction',
+                            host=host,
+                            message=f"Disk {path or 'unknown'} growth ACCELERATING rapidly!",
+                            details={
+                                'path': path,
+                                'acceleration_ratio': accel_ratio,
+                                'rate_per_day_gb': d1_per_day / 1e9,
+                                'trend': analysis.trend.value
+                            }
+                        )
+                    elif d2_per_day > 0 and accel_ratio > self.accel_warning:
+                        alert = self._create_alert(
+                            severity='warning',
+                            source='disk_prediction',
+                            host=host,
+                            message=f"Disk {path or 'unknown'} growth is accelerating",
+                            details={
+                                'path': path,
+                                'acceleration_ratio': accel_ratio,
+                                'rate_per_day_gb': d1_per_day / 1e9,
+                                'trend': analysis.trend.value
+                            }
+                        )
+            
+            return alert
+            
+        except ImportError:
+            logger.debug("Derivative analysis not available")
+            return None
+        except Exception as e:
+            logger.error(f"Predictive check failed: {e}")
+            return None
+    
+    def _create_alert(self, severity: str, source: str, host: str, message: str, details: dict) -> dict:
+        """Create alert dict and dispatch."""
+        alert = {
+            'severity': severity,
+            'source': source,
+            'host': host or 'unknown',
+            'message': message,
+            'details': details,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        send_alert(
+            severity=severity,
+            source=source,
+            message=message,
+            host=host,
+            details=details
+        )
+        
+        logger.info(f"Predictive alert: {severity} - {message}")
+        
+        return alert
+
+
+def check_disk_prediction(
+    history: list[dict],
+    limit_bytes: int,
+    config: dict,
+    host: str = None,
+    path: str = None
+) -> Optional[dict]:
+    """
+    Convenience function for predictive disk checking.
+    
+    Example:
+        history = [
+            {'timestamp': datetime(2024, 1, 1), 'used_bytes': 100e9},
+            {'timestamp': datetime(2024, 1, 2), 'used_bytes': 120e9},
+            {'timestamp': datetime(2024, 1, 3), 'used_bytes': 150e9},  # Accelerating!
+        ]
+        alert = check_disk_prediction(history, limit_bytes=200e9, config={}, path='/scratch')
+    """
+    checker = PredictiveChecker(config)
+    return checker.check_disk_trend(history, limit_bytes, host, path)
