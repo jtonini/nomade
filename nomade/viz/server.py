@@ -1736,6 +1736,7 @@ class DataManager:
         self._correlation_data = None
         self._suggested_axes = None
         self._network_stats = None
+        self._ml_predictions = None
         self._discretization = None
         self._clustering_quality = None
         
@@ -1802,6 +1803,8 @@ class DataManager:
                             logger.info(f"Clustering detected: assortativity={self._clustering_quality['assortativity']['binary']}")
                         else:
                             logger.info(f"No significant clustering (assortativity={self._clustering_quality['assortativity']['binary']})")
+                        # Run ML predictions
+                        self.run_ml_predictions()
                 else:
                     # Use demo jobs
                     self._jobs = generate_demo_jobs(150)
@@ -1818,6 +1821,8 @@ class DataManager:
                     self._clustering_quality = compute_clustering_quality(self._jobs, self._edges)
                     logger.info("Using demo job data for network view")
                     
+                    # Run ML predictions
+                    self.run_ml_predictions()
                 return
         
         # Fall back to demo data
@@ -1837,6 +1842,7 @@ class DataManager:
         self._network_stats = network_result['stats']
         self._discretization = network_result['discretization']
         self._clustering_quality = compute_clustering_quality(self._jobs, self._edges)
+        self.run_ml_predictions()
     
     @property
     def clusters(self):
@@ -1877,11 +1883,80 @@ class DataManager:
     @property
     def clustering_quality(self):
         return self._clustering_quality
+    @property
+    def ml_predictions(self):
+        return self._ml_predictions
     
     def refresh(self):
         """Refresh data from source."""
         self._load_data()
     
+    
+    def run_ml_predictions(self):
+        """Run ML ensemble predictions on current jobs."""
+        try:
+            from nomade.ml import is_torch_available
+            if not is_torch_available():
+                self._ml_predictions = {"status": "pytorch_not_available"}
+                return
+            
+            from nomade.ml.ensemble import FailureEnsemble
+            from nomade.ml.gnn_torch import FailureGNN, prepare_pyg_data
+            from nomade.ml.autoencoder import JobAutoencoder, prepare_autoencoder_data
+            import torch
+            
+            jobs = self._jobs
+            edges = self._edges
+            
+            if not jobs or len(jobs) < 10:
+                self._ml_predictions = {"status": "insufficient_data"}
+                return
+            
+            # Prepare GNN data
+            gnn_edges = [{"source": e["source"], "target": e["target"]} for e in edges]
+            gnn_data = prepare_pyg_data(jobs, gnn_edges)
+            
+            # Quick GNN prediction (untrained - just structure)
+            gnn_model = FailureGNN(input_dim=gnn_data.x.size(1), hidden_dim=32, output_dim=8)
+            
+            # Autoencoder for anomaly detection
+            ae_features, ae_labels, _ = prepare_autoencoder_data(jobs)
+            ae_model = JobAutoencoder(input_dim=ae_features.size(1), latent_dim=4)
+            
+            # Simple anomaly scores (reconstruction error without training)
+            ae_model.eval()
+            with torch.no_grad():
+                recon = ae_model(ae_features)
+                errors = ((ae_features - recon) ** 2).mean(dim=1)
+                threshold = errors.mean() + 2 * errors.std()
+                anomalies = errors > threshold
+            
+            # Identify high-risk jobs
+            high_risk = []
+            for i, (job, is_anomaly, error) in enumerate(zip(jobs, anomalies.tolist(), errors.tolist())):
+                if is_anomaly or job.get("failure_reason", 0) != 0:
+                    high_risk.append({
+                        "job_idx": i,
+                        "job_id": job.get("job_id", i),
+                        "anomaly_score": round(error, 4),
+                        "is_anomaly": is_anomaly,
+                        "failure_reason": job.get("failure_reason", 0)
+                    })
+            
+            high_risk.sort(key=lambda x: -x["anomaly_score"])
+            
+            self._ml_predictions = {
+                "status": "ready",
+                "n_jobs": len(jobs),
+                "n_anomalies": int(anomalies.sum()),
+                "threshold": round(float(threshold), 4),
+                "high_risk": high_risk[:50]  # Top 50
+            }
+            logger.info(f"ML predictions: {len(high_risk)} high-risk jobs identified")
+            
+        except Exception as e:
+            logger.error(f"ML prediction error: {e}")
+            self._ml_predictions = {"status": "error", "message": str(e)}
     def get_stats(self) -> dict:
         """Get summary statistics."""
         online_nodes = sum(1 for n in self._nodes.values() if n['status'] == 'online')
@@ -2469,6 +2544,7 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
             const [networkStats, setNetworkStats] = useState(null);
             const [networkMethod, setNetworkMethod] = useState(null);
             const [clusteringQuality, setClusteringQuality] = useState(null);
+            const [mlPredictions, setMlPredictions] = useState(null);
             const [dataSource, setDataSource] = useState('loading...');
             const [activeTab, setActiveTab] = useState(null);
             const [selectedNode, setSelectedNode] = useState(null);
@@ -2488,6 +2564,7 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
                         setNetworkStats(data.network_stats);
                         setNetworkMethod(data.network_method);
                         setClusteringQuality(data.clustering_quality);
+                        setMlPredictions(data.ml_predictions);
                         setDataSource(data.data_source || 'unknown');
                         setActiveTab(Object.keys(data.clusters)[0]);
                     });
@@ -2566,6 +2643,7 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
                                 networkStats={networkStats}
                                 networkMethod={networkMethod}
                                 clusteringQuality={clusteringQuality}
+                                mlPredictions={mlPredictions}
                             />
                         ) : (
                             <>
@@ -2815,7 +2893,7 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
             );
         }
         
-        function NetworkView({ jobs, edges, featureStats, correlationData, suggestedAxes, networkStats, networkMethod, clusteringQuality }) {
+        function NetworkView({ jobs, edges, featureStats, correlationData, suggestedAxes, networkStats, networkMethod, clusteringQuality, mlPredictions }) {
             const containerRef = useRef(null);
             const sceneRef = useRef(null);
             const nodeGroupRef = useRef(null);
@@ -2825,6 +2903,7 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
             const [showCorrelation, setShowCorrelation] = useState(false);
             const [showMethod, setShowMethod] = useState(false);
             const [showClustering, setShowClustering] = useState(false);
+            const [showML, setShowML] = useState(false);
             const [forceIterations, setForceIterations] = useState(0);
             const forcePositionsRef = useRef(null);
             const animationRef = useRef(null);
@@ -3471,6 +3550,13 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
                                 onClick={() => { setShowClustering(!showClustering); setShowStats(false); setShowCorrelation(false); setShowMethod(false); }}
                             >
                                 Clustering
+                            </button>
+                            <button
+                                className={`network-btn ${showML ? "active" : ""}`}
+                                onClick={() => { setShowML(!showML); setShowStats(false); setShowCorrelation(false); setShowMethod(false); setShowClustering(false); }}
+                                style={{ background: showML ? "#e74c3c" : "#3498db" }}
+                            >
+                                🔮 ML Risk
                             </button>
                         </div>
                         
@@ -4151,7 +4237,8 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 "suggested_axes": dm.suggested_axes,
                 "network_stats": dm.network_stats,
                 "clustering_quality": dm.clustering_quality,
-                "network_method": "simpson_bipartite"  # Vilhena & Antonelli method
+                "network_method": "simpson_bipartite",
+                "ml_predictions": dm.ml_predictions or {"status": "not_ready"}
             }
             self.wfile.write(json.dumps(data).encode())
             
@@ -4163,6 +4250,15 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(DashboardHandler.data_manager.clustering_quality).encode())
             
+        elif parsed.path == "/api/predictions":
+            # ML predictions endpoint
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            dm = DashboardHandler.data_manager
+            predictions = dm.ml_predictions or {"status": "not_trained", "high_risk": []}
+            self.wfile.write(json.dumps(predictions).encode())
         elif parsed.path == '/api/refresh':
             DashboardHandler.data_manager.refresh()
             self.send_response(200)

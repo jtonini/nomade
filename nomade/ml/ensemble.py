@@ -303,3 +303,152 @@ if __name__ == '__main__':
         print("\n" + "=" * 60)
         print("ENSEMBLE READY")
         print("=" * 60)
+
+
+def train_and_save_ensemble(db_path: str, models_dir: str = None, 
+                            epochs: int = 100, verbose: bool = True) -> dict:
+    """
+    Train ensemble on database jobs and save results.
+    
+    This is the main entry point for continuous training.
+    """
+    import sqlite3
+    from pathlib import Path
+    from .persistence import init_ml_tables, save_predictions_to_db
+    
+    if models_dir is None:
+        models_dir = Path(db_path).parent / 'ml_models'
+    
+    # Initialize tables
+    init_ml_tables(db_path)
+    
+    # Load jobs from database
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    jobs = [dict(row) for row in conn.execute("SELECT * FROM jobs").fetchall()]
+    conn.close()
+    
+    if not jobs:
+        return {'status': 'error', 'message': 'No jobs in database'}
+    
+    if verbose:
+        print(f"Training ensemble on {len(jobs)} jobs...")
+    
+    # Build edges
+    from nomade.viz.server import build_bipartite_network
+    network = build_bipartite_network(jobs, threshold=0.5, max_edges=15000)
+    edges = [{'source': e['source'], 'target': e['target']} for e in network['edges']]
+    
+    if verbose:
+        print(f"Built {len(edges)} Simpson similarity edges")
+    
+    # Train ensemble
+    results = train_ensemble(jobs, edges, epochs=epochs, verbose=verbose)
+    
+    # Prepare predictions for storage
+    gnn_results = results['gnn']['test_results']
+    lstm_results = results['lstm']
+    ae_results = results['autoencoder']['results']
+    
+    # Get ensemble predictions for all jobs
+    ensemble = results['ensemble']
+    
+    from .gnn_torch import prepare_pyg_data
+    from .autoencoder import prepare_autoencoder_data
+    from .lstm import generate_synthetic_trajectories
+    
+    gnn_data = prepare_pyg_data(jobs, edges)
+    ae_features, _, _ = prepare_autoencoder_data(jobs)
+    trajectories, _ = generate_synthetic_trajectories(jobs)
+    
+    import torch
+    traj_tensor = torch.stack([torch.tensor(t, dtype=torch.float) for t in trajectories])
+    
+    # Run ensemble prediction
+    # Get device and move data
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    gnn_data.x = gnn_data.x.to(device)
+    gnn_data.edge_index = gnn_data.edge_index.to(device)
+    traj_tensor = traj_tensor.to(device)
+    ae_features = ae_features.to(device)
+    
+    pred_result = ensemble.predict(
+        gnn_data=(gnn_data.x, gnn_data.edge_index),
+        lstm_data=traj_tensor,
+        ae_data=ae_features,
+        return_components=True
+    )
+    
+    # Compute anomaly scores from autoencoder
+    # Get device from trained model
+    device = next(results["autoencoder"]["model"].parameters()).device
+    
+    ae_model = results["autoencoder"]["model"]
+    ae_model.eval()
+    with torch.no_grad():
+        ae_errors = ae_model.reconstruction_error(ae_features.to(device))
+    
+    threshold = results['autoencoder']['threshold']
+    
+    # Build job-level predictions
+    job_predictions = []
+    high_risk = []
+    
+    for i, job in enumerate(jobs):
+        pred_class = pred_result['predictions'][i]
+        confidence = pred_result['confidences'][i]
+        anomaly_score = float(ae_errors[i])
+        is_anomaly = anomaly_score > threshold
+        
+        job_pred = {
+            'job_id': job.get('job_id', str(i)),
+            'job_idx': i,
+            'predicted_class': pred_class,
+            'predicted_name': FAILURE_NAMES.get(pred_class, f'Class {pred_class}'),
+            'confidence': round(confidence, 4),
+            'anomaly_score': round(anomaly_score, 4),
+            'is_anomaly': is_anomaly,
+            'actual_failure': job.get('failure_reason', 0)
+        }
+        
+        job_predictions.append(job_pred)
+        
+        # High risk: anomaly OR predicted failure with high confidence
+        if is_anomaly or (pred_class != 0 and confidence > 0.5):
+            high_risk.append(job_pred)
+    
+    # Sort high risk by anomaly score
+    high_risk.sort(key=lambda x: -x['anomaly_score'])
+    
+    # Build summary
+    predictions = {
+        'status': 'trained',
+        'n_jobs': len(jobs),
+        'n_anomalies': sum(1 for jp in job_predictions if jp['is_anomaly']),
+        'threshold': round(threshold, 4),
+        'high_risk': high_risk[:100],  # Top 100
+        'job_predictions': job_predictions,
+        'summary': {
+            'gnn_accuracy': round(gnn_results['accuracy'], 4),
+            'lstm_accuracy': round(lstm_results['test_accuracy'], 4),
+            'ae_precision': round(ae_results.get('precision', 0), 4),
+            'ae_recall': round(ae_results.get('recall', 0), 4),
+            'epochs': epochs,
+            'n_edges': len(edges)
+        }
+    }
+    
+    # Save to database
+    prediction_id = save_predictions_to_db(db_path, predictions)
+    predictions['prediction_id'] = prediction_id
+    
+    if verbose:
+        print(f"\n{'='*60}")
+        print("ENSEMBLE TRAINED AND SAVED")
+        print(f"{'='*60}")
+        print(f"Prediction ID: {prediction_id}")
+        print(f"High-risk jobs: {len(high_risk)}")
+        print(f"Anomalies: {predictions['n_anomalies']}")
+    
+    return predictions

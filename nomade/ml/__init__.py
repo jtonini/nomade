@@ -5,6 +5,7 @@ NØMADE Machine Learning Module
 - LSTM: When it fails (temporal patterns)
 - Autoencoder: Is this normal (anomaly detection)
 - Ensemble: Combined prediction
+- Persistence: Save/load models and predictions
 """
 
 from .gnn import (
@@ -26,7 +27,11 @@ try:
         prepare_autoencoder_data
     )
     from .ensemble import (
-        FailureEnsemble, train_ensemble
+        FailureEnsemble, train_ensemble, train_and_save_ensemble
+    )
+    from .persistence import (
+        init_ml_tables, save_predictions_to_db, load_predictions_from_db,
+        save_ensemble_models, load_latest_models, get_prediction_history
     )
 except ImportError:
     is_torch_available = lambda: False
@@ -40,5 +45,7 @@ __all__ = [
     'JobTrajectoryDataset', 'generate_synthetic_trajectories',
     'JobAutoencoder', 'AutoencoderTrainer', 'train_anomaly_detector',
     'prepare_autoencoder_data',
-    'FailureEnsemble', 'train_ensemble'
+    'FailureEnsemble', 'train_ensemble', 'train_and_save_ensemble',
+    'init_ml_tables', 'save_predictions_to_db', 'load_predictions_from_db',
+    'save_ensemble_models', 'load_latest_models', 'get_prediction_history'
 ]
