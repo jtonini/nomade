@@ -789,6 +789,21 @@ def syscheck(ctx: click.Context) -> None:
     else:
         click.echo(f"  {click.style('✗', fg='red')} Missing packages: {', '.join(missing)}")
         errors += 1
+
+    # ML packages (optional)
+    click.echo()
+    click.echo(click.style("ML Packages (optional):", bold=True))
+    ml_packages = [("sklearn", "scikit-learn"), ("torch", "pytorch"), ("torch_geometric", "torch-geometric")]
+    ml_available = True
+    for pkg, name in ml_packages:
+        try:
+            __import__(pkg)
+            click.echo(f"  {click.style('✓', fg='green')} {name}")
+        except ImportError:
+            click.echo(f"  {click.style('○', fg='cyan')} {name} (not installed)")
+            ml_available = False
+    if not ml_available:
+        click.echo(f"  {click.style('→', fg='yellow')} Install with: pip install nomade[ml]")
     
     click.echo()
     
@@ -1418,6 +1433,126 @@ def learn(ctx, db, strategy, threshold, interval, epochs, force, daemon,
         click.echo(f"  High-risk jobs: {len(result.get('high_risk', []))}")
     else:
         click.echo(click.style(f"Training failed: {result.get('error')}", fg="red"))
+
+
+
+@cli.command()
+@click.option('--system', is_flag=True, help='Install system-wide (/etc/nomade)')
+@click.option('--force', is_flag=True, help='Overwrite existing config')
+@click.pass_context
+def init(ctx, system, force):
+    """Initialize NOMADE configuration and data directories.
+    
+    \b
+    Creates:
+      ~/.config/nomade/nomade.toml   Configuration file
+      ~/.local/share/nomade/         Data directory (database, models)
+    
+    \b
+    With --system:
+      /etc/nomade/nomade.toml        System configuration
+      /var/lib/nomade/               System data directory
+    
+    \b
+    Examples:
+      nomade init                    User installation
+      sudo nomade init --system      System-wide installation
+    """
+    import shutil
+    from importlib.resources import files
+    
+    if system:
+        config_dir = Path('/etc/nomade')
+        data_dir = Path('/var/lib/nomade')
+        log_dir = Path('/var/log/nomade')
+    else:
+        config_dir = Path.home() / '.config' / 'nomade'
+        data_dir = Path.home() / '.local' / 'share' / 'nomade'
+        log_dir = data_dir / 'logs'
+    
+    config_file = config_dir / 'nomade.toml'
+    
+    # Check existing
+    if config_file.exists() and not force:
+        click.echo(click.style(f"Config already exists: {config_file}", fg="yellow"))
+        click.echo("Use --force to overwrite")
+        return
+    
+    # Create directories
+    click.echo(f"Creating directories...")
+    try:
+        config_dir.mkdir(parents=True, exist_ok=True)
+        data_dir.mkdir(parents=True, exist_ok=True)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (data_dir / 'models').mkdir(exist_ok=True)
+        click.echo(f"  {config_dir}")
+        click.echo(f"  {data_dir}")
+        click.echo(f"  {log_dir}")
+    except PermissionError:
+        click.echo(click.style("Permission denied. Use sudo for system install.", fg="red"))
+        return
+    
+    # Copy default config
+    click.echo(f"Creating config file...")
+    try:
+        # Try to find packaged config
+        try:
+            import nomade.config
+            pkg_config = Path(nomade.config.__file__).parent / 'default.toml'
+            if pkg_config.exists():
+                shutil.copy(pkg_config, config_file)
+            else:
+                raise FileNotFoundError
+        except (ImportError, FileNotFoundError):
+            # Fallback: look relative to cli.py
+            cli_path = Path(__file__).parent
+            pkg_config = cli_path / 'config' / 'default.toml'
+            if pkg_config.exists():
+                shutil.copy(pkg_config, config_file)
+            else:
+                # Generate minimal config
+                minimal = f"""# NOMADE Configuration
+[general]
+data_dir = "{data_dir}"
+
+[database]
+path = "nomade.db"
+
+[collectors]
+enabled = ["disk", "slurm"]
+interval = 60
+
+[alerts]
+enabled = true
+min_severity = "warning"
+
+[ml]
+enabled = true
+"""
+                config_file.write_text(minimal)
+        
+        click.echo(f"  {config_file}")
+    except Exception as e:
+        click.echo(click.style(f"Failed to create config: {e}", fg="red"))
+        return
+    
+    # Update config with actual paths
+    if config_file.exists():
+        config_text = config_file.read_text()
+        config_text = config_text.replace('data_dir = "~/.local/share/nomade"', 
+                                          f'data_dir = "{data_dir}"')
+        if system:
+            config_text = config_text.replace('/var/log/nomade', str(log_dir))
+        config_file.write_text(config_text)
+    
+    click.echo()
+    click.echo(click.style("NOMADE initialized!", fg="green", bold=True))
+    click.echo()
+    click.echo("Next steps:")
+    click.echo(f"  1. Edit config: {config_file}")
+    click.echo(f"  2. Check system: nomade syscheck")
+    click.echo(f"  3. Start collecting: nomade collect")
+    click.echo(f"  4. View dashboard: nomade dashboard")
 
 
 def main() -> None:

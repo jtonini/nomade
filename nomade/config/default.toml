@@ -1,0 +1,146 @@
+# NØMADE Configuration File
+# Copy to ~/.config/nomade/nomade.toml or /etc/nomade/nomade.toml
+
+[general]
+# Log level: debug, info, warning, error
+log_level = "info"
+# Data directory for database and models
+data_dir = "~/.local/share/nomade"
+
+[database]
+# SQLite database path (relative to data_dir or absolute)
+path = "nomade.db"
+
+# ============================================
+# COLLECTORS
+# ============================================
+
+[collectors]
+# Enable/disable specific collectors
+enabled = ["disk", "slurm", "node_state"]
+# Collection interval in seconds
+interval = 60
+
+[collectors.disk]
+# Filesystems to monitor
+filesystems = ["/", "/home", "/scratch", "/localscratch"]
+# Enable quota collection
+quota_enabled = false
+
+[collectors.slurm]
+# SLURM partition to monitor (empty = all)
+partitions = []
+
+[collectors.gpu]
+# Enable GPU monitoring (requires nvidia-smi)
+enabled = true
+
+[collectors.nfs]
+# NFS mount points to monitor
+mount_points = []
+
+# ============================================
+# ALERTS
+# ============================================
+
+[alerts]
+# Enable alert system
+enabled = true
+# Minimum severity to dispatch: info, warning, critical
+min_severity = "warning"
+# Cooldown between duplicate alerts (minutes)
+cooldown_minutes = 15
+
+[alerts.thresholds.disk]
+used_percent_warning = 80
+used_percent_critical = 95
+
+[alerts.thresholds.nfs]
+retrans_percent_warning = 1.0
+retrans_percent_critical = 5.0
+avg_rtt_ms_warning = 50
+avg_rtt_ms_critical = 100
+
+[alerts.thresholds.gpu]
+memory_percent_warning = 90
+temperature_warning = 80
+temperature_critical = 90
+
+[alerts.predictive]
+# Predictive alerts using derivative analysis
+enabled = true
+days_until_full_warning = 7
+days_until_full_critical = 1
+
+# Email notifications (optional)
+[alerts.email]
+enabled = false
+smtp_server = "smtp.example.com"
+smtp_port = 587
+use_tls = true
+# username = "user"
+# password = "pass"
+from_address = "nomade@example.com"
+recipients = ["admin@example.com"]
+
+# Slack notifications (optional)
+[alerts.slack]
+enabled = false
+webhook_url = ""
+channel = "#hpc-alerts"
+username = "NOMADE"
+
+# Generic webhook (optional)
+[alerts.webhook]
+enabled = false
+url = ""
+# auth_token = ""
+
+# ============================================
+# ML PREDICTION
+# ============================================
+
+[ml]
+# Enable ML predictions
+enabled = true
+# Default training epochs
+epochs = 100
+# Models directory (relative to data_dir or absolute)
+models_dir = "models"
+
+[ml.learning]
+# Continuous learning strategy: time, count, drift
+strategy = "count"
+# Retrain after N new jobs (for count strategy)
+job_threshold = 100
+# Retrain every N hours (for time strategy)
+interval_hours = 6
+# Minimum jobs required for training
+min_jobs = 50
+
+# ============================================
+# DASHBOARD
+# ============================================
+
+[dashboard]
+# Default host and port
+host = "127.0.0.1"
+port = 8050
+# Enable ML risk panel
+ml_panel = true
+
+# ============================================
+# SLURM INTEGRATION
+# ============================================
+
+[slurm]
+# Path to SLURM commands (if not in PATH)
+# bin_path = "/usr/bin"
+
+[slurm.prolog]
+# Real-time job scoring
+enabled = false
+# Risk threshold for logging (0.0 - 1.0)
+risk_threshold = 0.7
+# Log file for high-risk jobs
+log_file = "/var/log/nomade/high_risk_jobs.log"
