@@ -9,12 +9,12 @@ tags:
   - SLURM
   - predictive analytics
 authors:
-  - name: João Tonini
-    orcid: 0000-0000-0000-0000
+  - name: João Filipe Riva Tonini
+    orcid: 0000-0002-4730-3805
     corresponding: true
     affiliation: 1
 affiliations:
-  - name: University of Richmond, Richmond, VA, USA
+  - name: Academic Research Computing, University of Richmond, VA 23173, USA
     index: 1
 date: December 2025
 bibliography: paper.bib
