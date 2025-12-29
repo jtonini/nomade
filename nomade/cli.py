@@ -1437,26 +1437,32 @@ def learn(ctx, db, strategy, threshold, interval, epochs, force, daemon,
 
 
 @cli.command()
-@click.option('--system', is_flag=True, help='Install system-wide (/etc/nomade)')
-@click.option('--force', is_flag=True, help='Overwrite existing config')
+@click.option('--system', is_flag=True, help='Install system-wide for HPC')
+@click.option('--force', is_flag=True, help='Overwrite existing files')
+@click.option('--no-systemd', is_flag=True, help='Skip systemd service installation')
+@click.option('--no-prolog', is_flag=True, help='Skip SLURM prolog hook')
 @click.pass_context
-def init(ctx, system, force):
+def init(ctx, system, force, no_systemd, no_prolog):
     """Initialize NOMADE configuration and data directories.
     
     \b
-    Creates:
-      ~/.config/nomade/nomade.toml   Configuration file
-      ~/.local/share/nomade/         Data directory (database, models)
+    User install (default):
+      ~/.config/nomade/nomade.toml   Configuration
+      ~/.local/share/nomade/         Data directory
     
     \b
-    With --system:
-      /etc/nomade/nomade.toml        System configuration
-      /var/lib/nomade/               System data directory
+    System install (--system, requires root):
+      /etc/nomade/nomade.toml        Configuration
+      /var/lib/nomade/               Data directory
+      /var/log/nomade/               Log directory
+      /etc/systemd/system/           Service files
+      /etc/slurm/prolog.d/           SLURM hook
+      /etc/logrotate.d/nomade        Log rotation
     
     \b
     Examples:
       nomade init                    User installation
-      sudo nomade init --system      System-wide installation
+      sudo nomade init --system      Full HPC installation
     """
     import shutil
     from importlib.resources import files
