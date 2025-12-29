@@ -40,7 +40,7 @@ NØMADE is inspired by nomadic principles:
 │                                                                         │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │                      ALERT DISPATCHER                            │   │
-│  │         📧 Email    💬 Slack    🔔 Webhook    📊 Dashboard       │   │
+│  │             Email · Slack · Webhook · Dashboard               │   │
 │  └─────────────────────────────┬───────────────────────────────────┘   │
 │                                │                                        │
 │  ┌─────────────────────────────┴───────────────────────────────────┐   │
@@ -297,12 +297,12 @@ Traditional threshold alerts only trigger when a value crosses a limit. By monit
 
 | Metric | Accelerating (d²>0) | Decelerating (d²<0) |
 |--------|---------------------|---------------------|
-| Disk usage | ⚠️ Exponential fill | ✓ Cleanup in progress |
-| Queue depth | ⚠️ System issue | ✓ Draining normally |
-| Failure rate | 🔴 Cascading problem | ✓ Issue resolving |
-| NFS latency | ⚠️ I/O storm developing | ✓ Load decreasing |
-| Job memory | ⚠️ Memory leak / OOM | ✓ Normal variation |
-| GPU temp | ⚠️ Cooling issue | ✓ Throttling working |
+| Disk usage | ! Exponential fill | OK Cleanup in progress |
+| Queue depth | ! System issue | OK Draining normally |
+| Failure rate | 🔴 Cascading problem | OK Issue resolving |
+| NFS latency | ! I/O storm developing | OK Load decreasing |
+| Job memory | ! Memory leak / OOM | OK Normal variation |
+| GPU temp | ! Cooling issue | OK Throttling working |
 
 ---
 
@@ -334,30 +334,30 @@ Expected output:
 NØMADE System Check
 ════════════════════════════════════════
 Python:
-  ✓ Version 3.10.12 (requires >=3.9)
-  ✓ Required packages installed
+  OK Version 3.10.12 (requires >=3.9)
+  OK Required packages installed
 SLURM:
-  ✓ sinfo available
-  ✓ squeue available
-  ✓ sacct available
-  ✓ sstat available
-  ✓ slurmdbd enabled
-  ✓ JobAcctGather configured
+  OK sinfo available
+  OK squeue available
+  OK sacct available
+  OK sstat available
+  OK slurmdbd enabled
+  OK JobAcctGather configured
 System Tools:
-  ✓ iostat available
-  ✓ mpstat available
-  ✓ vmstat available
+  OK iostat available
+  OK mpstat available
+  OK vmstat available
   ○ nvidia-smi not found (no GPU monitoring)
   ○ nfsiostat not found (no NFS monitoring)
-  ✓ /proc/[pid]/io accessible
+  OK /proc/[pid]/io accessible
 Database:
-  ✓ SQLite available
-  ✓ Database: /var/lib/nomade/nomade.db
-  ✓ Schema version: 2
+  OK SQLite available
+  OK Database: /var/lib/nomade/nomade.db
+  OK Schema version: 2
 Config:
-  ✓ Config: /etc/nomade/nomade.toml
+  OK Config: /etc/nomade/nomade.toml
 ────────────────────────────────────────
-✓ All checks passed!
+OK All checks passed!
 ```
 
 ### Quick Start
