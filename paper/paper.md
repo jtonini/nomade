@@ -52,9 +52,8 @@ NØMADE is implemented in Python and follows a modular architecture (\autoref{fi
 
 ![NØMADE architecture showing the data flow from collectors through the prediction engine to alert dispatch.\label{fig:architecture}](figures/architecture.png){ width=100% }
 
-![NØMADE dashboard showing cluster health with per-node job statistics, CPU utilization rings, and failure breakdown.\label{fig:dashboard}](figures/dashboard.png){ width=100% }
+![NØMADE dashboard views: (A) compute partition with 6 nodes, (B) highmem partition, (C) GPU partition, (D) network visualization showing job similarity clustering where failed jobs (red/orange) separate from successful jobs (green).\label{fig:dashboard}](figures/dashboard.png){ width=100% }
 
-![Network visualization showing jobs clustered by feature similarity. Failed jobs (red/orange) cluster separately from successful jobs (green), enabling pattern-based failure prediction.\label{fig:network}](figures/dashboard2.png){ width=100% }
 
 **Collectors** gather metrics from system tools (`iostat`, `vmstat`, `nvidia-smi`), SLURM commands (`sacct`, `squeue`, `sinfo`), and per-job I/O statistics from `/proc/[pid]/io`. A SLURM prolog hook captures job context at submission time.
 
@@ -78,6 +77,12 @@ pip install nomade-hpc
 nomade init
 nomade collect    # Start data collection
 nomade dashboard  # Launch web interface
+```
+
+For testing without an HPC cluster:
+
+```bash
+nomade demo       # Generate synthetic data and launch dashboard
 ```
 
 For HPC-wide deployment, system installation configures systemd services and SLURM prolog hooks:

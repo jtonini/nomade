@@ -53,7 +53,7 @@ NØMADE is inspired by nomadic principles:
 │  ┌─────────────────────┐                ┌─────────────────────────┐   │
 │  │  MONITORING ENGINE  │                │   PREDICTION ENGINE     │   │
 │  │  Threshold-based    │                │   Similarity networks   │   │
-│  │  Immediate alerts   │                │   19-dim feature space  │   │
+│  │  Immediate alerts   │                │   17-dim feature space  │   │
 │  └─────────┬───────────┘                └────────────┬────────────┘   │
 │            │                                          │                │
 │            └──────────────────┬───────────────────────┘                │
@@ -247,7 +247,7 @@ NØMADE builds job similarity networks using a comprehensive feature vector that
 
 - **Raw quantitative metrics**: No arbitrary thresholds or binary labels
 - **Non-redundant features**: `vram_gb > 0` implies GPU used (no separate flag)
-- **Cosine similarity**: On normalized 19-dimension feature vectors
+- **Cosine similarity**: On normalized 17-dimension feature vectors
 - **Continuous health score**: 0 (catastrophic) → 1 (perfect), not binary
 - **Time-correlated system state**: iostat/mpstat/vmstat data aligned to job runtime
 
@@ -362,26 +362,29 @@ OK All checks passed!
 
 ### Quick Start
 
+**Try it now (no HPC required):**
 ```bash
-# Clone the repository
+pip install nomade-hpc
+nomade demo
+```
+
+This generates synthetic data and launches the dashboard at http://localhost:5000
+
+**For production HPC deployment:**
+```bash
+pip install nomade-hpc
+nomade init
+nomade collect    # Start data collection
+nomade dashboard  # Launch web interface
+```
+
+**Or install from source:**
+```bash
 git clone https://github.com/jtonini/nomade.git
 cd nomade
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Initialize database
-nomade init
-
-# Start monitoring daemon
-nomade start
-
-# View dashboard
-nomade dashboard
+pip install -e .
+nomade demo  # Test with synthetic data
+```
 ```
 
 ### SLURM Integration (Optional)
