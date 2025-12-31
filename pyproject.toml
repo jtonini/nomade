@@ -7,7 +7,7 @@ name = "nomade-hpc"
 version = "0.3.3"
 description = "A lightweight HPC monitoring and predictive analytics tool"
 readme = "README.md"
-license = "AGPL-3.0-or-later"
+license = {text = "AGPL-3.0-or-later"}
 authors = [
     {name = "Joao Tonini", email = "jtonini@richmond.edu"}
 ]
