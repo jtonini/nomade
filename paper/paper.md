@@ -61,7 +61,7 @@ NØMADE is implemented in Python using scikit-learn [@scikit-learn], PyTorch [@p
 
 **ML Prediction** uses an ensemble of three models:
 
-- Graph Neural Network (GNN): Captures relationships between similar jobs based on Simpson similarity of feature vectors
+- Graph Neural Network (GNN): Captures relationships between similar jobs based on cosine similarity of feature vectors
 - LSTM: Detects temporal patterns and early warning trajectories
 - Autoencoder: Identifies anomalous jobs that deviate from normal behavior
 
