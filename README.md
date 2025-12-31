@@ -100,7 +100,7 @@ NØMADE is inspired by nomadic principles:
 │  │ job_monitor  │ Per-job I/O: NFS vs local writes from /proc/[pid]/io    │  │
 │  └──────────────┴─────────────────────────────────────────────────────────┘  │
 │                                                                              │
-│  FEATURE VECTOR (19 dimensions for similarity analysis):                     │
+│  FEATURE VECTOR (17 dimensions for similarity analysis):                     │
 │  ┌────────────────────────────────────────────────────────────────────────┐  │
 │  │  From sacct:              From iostat:           From vmstat:          │  │
 │  │   1. health_score          11. avg_iowait         17. memory_pressure  │  │
@@ -192,7 +192,7 @@ NØMADE is inspired by nomadic principles:
 
 ## Prediction Capabilities
 
-### 19-Dimension Feature Vector
+### 17-Dimension Feature Vector
 
 NØMADE builds job similarity networks using a comprehensive feature vector that captures multiple aspects of job behavior:
 
