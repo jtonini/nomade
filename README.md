@@ -54,7 +54,7 @@ NØMADE is inspired by nomadic principles:
 │  │  MONITORING ENGINE  │                │   PREDICTION ENGINE     │     │
 │  │  Threshold-based    │                │   Similarity networks   │     │
 │  │  Immediate alerts   │                │   17-dim feature space  │     │
-│  └─────────┬───────────┘                └────────────┬────────────┘     │
+│  └─────────┬───────────┘                └─────────────┬───────────┘     │
 │            │                                          │                 │
 │            └──────────────────┬───────────────────────┘                 │
 │                               │                                         │
