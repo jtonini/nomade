@@ -4489,6 +4489,276 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
 </body>
 </html>'''
 
+EXIT_CODE_NAMES = {
+    0: 'SUCCESS', 1: 'FAILED', 2: 'TIMEOUT', 3: 'OOM',
+    4: 'SEGFAULT', 5: 'NODE_FAIL', 6: 'CANCELLED', 7: 'UNKNOWN'
+}
+
+EXIT_CODE_ICONS = {
+    'success': '✓', 'failed': '❌', 'timeout': '⏱', 'oom': '💾',
+    'segfault': '💥', 'node_fail': '🖥', 'cancelled': '🚫', 'unknown': '❓'
+}
+
+
+def get_failure_name(job):
+    """Get failure reason name from job, handling both string and int."""
+    reason = job.get('failure_reason') or job.get('exit_code', 0)
+    if isinstance(reason, int):
+        return EXIT_CODE_NAMES.get(reason, f'CODE_{reason}')
+    return str(reason).upper() if reason else 'UNKNOWN'
+
+
+def generate_failure_list_v2(failures):
+    """Generate HTML for mobile failure list with proper exit code names."""
+    if not failures:
+        return ''
+    html = ''
+    for job in failures[:5]:
+        reason = get_failure_name(job)
+        icon = EXIT_CODE_ICONS.get(reason.lower(), '❓')
+        job_id = job.get('job_id', 'N/A')
+        runtime = job.get('runtime_sec', 0)
+        runtime_str = f"{int(runtime//60)}m {int(runtime%60)}s" if runtime else 'N/A'
+        html += f'<div class="alert-item"><div class="alert-icon red">{icon}</div><div class="alert-content"><div class="alert-title">Job {job_id}</div><div class="alert-subtitle">{reason} • {runtime_str}</div></div></div>'
+    return html
+
+
+def generate_risk_list_v2(predictions):
+    """Generate HTML for high-risk job list."""
+    if not predictions:
+        return ''
+    html = ''
+    for pred in predictions[:5]:
+        job_id = pred.get('job_id', 'N/A')
+        risk_pct = int(pred.get('risk_score', 0) * 100)
+        reason = pred.get('top_reason', 'unknown pattern')
+        html += f'<div class="alert-item"><div class="alert-icon yellow">⚡</div><div class="alert-content"><div class="alert-title">Job {job_id}</div><div class="alert-subtitle">{reason}</div></div><div class="risk-score">{risk_pct}%</div></div>'
+    return html
+
+
+def generate_cluster_data(dm):
+    """Generate per-cluster stats for mobile view."""
+    cluster_data = {}
+    for cluster_name in dm.clusters:
+        # Get nodes for this cluster
+        cluster_nodes = [n for n in dm.nodes.values() if n.get('cluster') == cluster_name]
+        online = sum(1 for n in cluster_nodes if n.get('status') == 'online')
+        total = len(cluster_nodes)
+        
+        # Get jobs for this cluster (by node)
+        cluster_node_names = {n.get('name') for n in cluster_nodes}
+        cluster_jobs = [j for j in dm.jobs if j.get('node') in cluster_node_names]
+        job_success = sum(1 for j in cluster_jobs if j.get('success', True))
+        job_total = len(cluster_jobs)
+        job_rate = int(100 * job_success / job_total) if job_total > 0 else 100
+        
+        # Recent failures in cluster
+        cluster_failures = [j for j in cluster_jobs if not j.get('success', True)][-3:]
+        cluster_failures.reverse()
+        
+        # Status
+        node_health = int(100 * online / total) if total > 0 else 0
+        if node_health >= 95 and job_rate >= 80:
+            status = 'healthy'
+        elif node_health >= 80 and job_rate >= 60:
+            status = 'warning'
+        else:
+            status = 'critical'
+        
+        cluster_data[cluster_name] = {
+            'nodes_online': online,
+            'nodes_total': total,
+            'node_health': node_health,
+            'jobs_success': job_success,
+            'jobs_total': job_total,
+            'job_rate': job_rate,
+            'failures': cluster_failures,
+            'status': status
+        }
+    return cluster_data
+
+def generate_mobile_html(dm, stats):
+    """Generate enhanced mobile dashboard HTML."""
+    high_risk_jobs = []
+    if hasattr(dm, '_predictions') and dm._predictions:
+        high_risk_jobs = [p for p in dm._predictions if p.get('risk_score', 0) > 0.7][:5]
+    recent_failures = [j for j in dm.jobs if not j.get('success', True)][-5:]
+    recent_failures.reverse()
+    total_nodes = stats.get('nodes_total', 0)
+    online_nodes = stats.get('nodes_online', 0)
+    node_health = int(100 * online_nodes / total_nodes) if total_nodes > 0 else 0
+    total_jobs = stats.get('jobs', 0)
+    success_jobs = stats.get('jobs_success', 0)
+    job_success_rate = int(100 * success_jobs / total_jobs) if total_jobs > 0 else 0
+    if node_health >= 95 and job_success_rate >= 80:
+        overall_status, status_color = "healthy", "#22c55e"
+    elif node_health >= 80 and job_success_rate >= 60:
+        overall_status, status_color = "warning", "#f59e0b"
+    else:
+        overall_status, status_color = "critical", "#ef4444"
+    node_color = 'green' if node_health >= 95 else 'yellow' if node_health >= 80 else 'red'
+    job_color = 'green' if job_success_rate >= 80 else 'yellow' if job_success_rate >= 60 else 'red'
+    cluster_data = generate_cluster_data(dm)
+    cluster_chips_html = ''
+    for name, data in cluster_data.items():
+        status_icon = '✓' if data['status'] == 'healthy' else '⚠' if data['status'] == 'warning' else '✗'
+        cluster_chips_html += f'<button class="chip chip-{data["status"]}" onclick="toggleCluster(\'{name}\')">{name} {status_icon}</button>'
+    cluster_details_html = ''
+    for name, data in cluster_data.items():
+        failures_html = ''
+        for job in data['failures'][:3]:
+            reason = get_failure_name(job)
+            job_id = job.get('job_id', 'N/A')
+            failures_html += f'<div class="cluster-failure">Job {job_id} - {reason}</div>'
+        if not failures_html:
+            failures_html = '<div class="cluster-failure dim">No recent failures</div>'
+        cluster_details_html += f'<div id="cluster-{name}" class="cluster-detail" style="display:none;"><div class="cluster-header">{name.upper()}</div><div class="cluster-stats"><div class="cluster-stat"><span class="stat-label">Nodes</span><span class="stat-value">{data["nodes_online"]}/{data["nodes_total"]}</span></div><div class="cluster-stat"><span class="stat-label">Success</span><span class="stat-value">{data["job_rate"]}%</span></div><div class="cluster-stat"><span class="stat-label">Jobs</span><span class="stat-value">{data["jobs_total"]}</span></div></div><div class="cluster-failures-title">Recent failures:</div>{failures_html}</div>'
+    pattern_html = ''
+    cq = dm.clustering_quality
+    if cq and not cq.get('error'):
+        r = cq.get('assortativity', {}).get('binary', 0)
+        z = cq.get('assortativity', {}).get('z_score', 0)
+        is_sig = abs(z) > 2
+        if r > 0.1 and is_sig:
+            pattern_html = f'<div class="card card-full" style="margin-bottom:20px;"><div class="card-label">📊 Pattern Analysis</div><div class="pattern-item"><span class="pattern-icon">🔗</span><span>Failures cluster together (r={r:.2f})</span></div>'
+            hotspots = compute_failure_hotspots(dm.jobs) if dm.jobs else []
+            if hotspots:
+                top = hotspots[0]
+                pattern_html += f'<div class="pattern-item"><span class="pattern-icon">🔥</span><span>Hotspot: {top["feature"]}={top["bin"]} ({int(top["failure_rate"])}% fail)</span></div>'
+            pattern_html += '</div>'
+    failure_html = generate_failure_list_v2(recent_failures) if recent_failures else '<div class="empty-state">No recent failures ✓</div>'
+    risk_html = generate_risk_list_v2(high_risk_jobs) if high_risk_jobs else '<div class="empty-state">No high-risk jobs ✓</div>'
+    return f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>NØMADE</title>
+    <style>
+        :root {{ --bg:#0f172a; --bg-card:#1e293b; --bg-hover:#334155; --text:#f1f5f9; --text-muted:#94a3b8; --green:#22c55e; --yellow:#f59e0b; --red:#ef4444; --cyan:#06b6d4; --purple:#a855f7; }}
+        * {{ box-sizing:border-box; margin:0; padding:0; }}
+        body {{ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:16px; padding-bottom:80px; }}
+        .header {{ display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; padding-bottom:16px; border-bottom:1px solid var(--bg-hover); }}
+        .logo {{ font-size:24px; font-weight:700; letter-spacing:-0.5px; }}
+        .logo span {{ color:var(--cyan); }}
+        .status-badge {{ display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:20px; font-size:12px; font-weight:600; background:{status_color}22; color:{status_color}; }}
+        .status-dot {{ width:8px; height:8px; border-radius:50%; background:{status_color}; animation:pulse 2s infinite; }}
+        @keyframes pulse {{ 0%,100%{{opacity:1;}} 50%{{opacity:0.5;}} }}
+        .grid {{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:20px; }}
+        .card {{ background:var(--bg-card); border-radius:12px; padding:16px; }}
+        .card-full {{ grid-column:1/-1; }}
+        .card-label {{ font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; }}
+        .card-value {{ font-size:32px; font-weight:700; line-height:1; }}
+        .card-value.green {{ color:var(--green); }}
+        .card-value.yellow {{ color:var(--yellow); }}
+        .card-value.red {{ color:var(--red); }}
+        .card-value.cyan {{ color:var(--cyan); }}
+        .card-subtitle {{ font-size:12px; color:var(--text-muted); margin-top:4px; }}
+        .progress-bar {{ height:6px; background:var(--bg-hover); border-radius:3px; margin-top:12px; overflow:hidden; }}
+        .progress-fill {{ height:100%; border-radius:3px; }}
+        .section-title {{ font-size:14px; font-weight:600; color:var(--text-muted); margin-bottom:12px; }}
+        .alert-list {{ display:flex; flex-direction:column; gap:8px; }}
+        .alert-item {{ display:flex; align-items:center; gap:12px; padding:12px; background:var(--bg-hover); border-radius:8px; font-size:13px; }}
+        .alert-icon {{ width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0; }}
+        .alert-icon.red {{ background:#ef444422; }}
+        .alert-icon.yellow {{ background:#f59e0b22; }}
+        .alert-content {{ flex:1; min-width:0; }}
+        .alert-title {{ font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+        .alert-subtitle {{ font-size:11px; color:var(--text-muted); }}
+        .risk-score {{ font-size:12px; font-weight:600; padding:4px 8px; border-radius:4px; background:#ef444422; color:var(--red); }}
+        .refresh-btn {{ position:fixed; bottom:20px; right:20px; width:56px; height:56px; border-radius:50%; background:var(--cyan); color:var(--bg); border:none; font-size:24px; cursor:pointer; box-shadow:0 4px 12px rgba(6,182,212,0.4); }}
+        .refresh-btn:active {{ transform:scale(0.95); }}
+        .empty-state {{ text-align:center; padding:20px; color:var(--text-muted); font-size:13px; }}
+        .cluster-chips {{ display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }}
+        .chip {{ padding:6px 12px; border-radius:12px; font-size:12px; background:var(--bg-hover); border:none; color:var(--text); cursor:pointer; transition:all 0.2s; }}
+        .chip:active {{ transform:scale(0.95); }}
+        .chip-healthy {{ border-left:3px solid var(--green); }}
+        .chip-warning {{ border-left:3px solid var(--yellow); }}
+        .chip-critical {{ border-left:3px solid var(--red); }}
+        .chip.active {{ background:#06b6d422; color:var(--cyan); }}
+        .cluster-detail {{ background:var(--bg-hover); border-radius:8px; padding:12px; margin-top:12px; animation:slideDown 0.2s ease; }}
+        @keyframes slideDown {{ from {{ opacity:0; transform:translateY(-10px); }} to {{ opacity:1; transform:translateY(0); }} }}
+        .cluster-header {{ font-size:12px; font-weight:600; color:var(--cyan); margin-bottom:8px; }}
+        .cluster-stats {{ display:flex; gap:16px; margin-bottom:8px; }}
+        .cluster-stat {{ display:flex; flex-direction:column; }}
+        .stat-label {{ font-size:10px; color:var(--text-muted); }}
+        .stat-value {{ font-size:14px; font-weight:600; }}
+        .cluster-failures-title {{ font-size:10px; color:var(--text-muted); margin-top:8px; margin-bottom:4px; }}
+        .cluster-failure {{ font-size:11px; color:var(--text-muted); padding:2px 0; }}
+        .cluster-failure.dim {{ opacity:0.6; }}
+        .data-source {{ text-align:center; font-size:11px; color:var(--text-muted); margin-top:20px; }}
+        .desktop-link {{ display:block; text-align:center; margin-top:16px; color:var(--cyan); font-size:12px; text-decoration:none; }}
+        .pattern-item {{ display:flex; align-items:center; gap:8px; font-size:12px; margin-top:8px; }}
+        .pattern-icon {{ font-size:14px; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">N<span>Ø</span>MADE</div>
+        <div class="status-badge"><div class="status-dot"></div>{overall_status.upper()}</div>
+    </div>
+    <div class="grid">
+        <div class="card">
+            <div class="card-label">Nodes Online</div>
+            <div class="card-value {node_color}">{online_nodes}</div>
+            <div class="card-subtitle">of {total_nodes} total</div>
+            <div class="progress-bar"><div class="progress-fill" style="width:{node_health}%;background:var(--{node_color});"></div></div>
+        </div>
+        <div class="card">
+            <div class="card-label">Job Success</div>
+            <div class="card-value {job_color}">{job_success_rate}%</div>
+            <div class="card-subtitle">{success_jobs:,} of {total_jobs:,}</div>
+            <div class="progress-bar"><div class="progress-fill" style="width:{job_success_rate}%;background:var(--{job_color});"></div></div>
+        </div>
+        <div class="card">
+            <div class="card-label">Failed Jobs</div>
+            <div class="card-value red">{stats.get('jobs_failed', 0)}</div>
+            <div class="card-subtitle">requires attention</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Network Edges</div>
+            <div class="card-value cyan">{stats.get('edges', 0):,}</div>
+            <div class="card-subtitle">job connections</div>
+        </div>
+    </div>
+    <div class="card card-full" style="margin-bottom:20px;">
+        <div class="card-label">Clusters (tap to expand)</div>
+        <div class="cluster-chips">{cluster_chips_html}</div>
+        {cluster_details_html}
+    </div>
+    {pattern_html}
+    <div class="section-title">🎯 High Risk Jobs</div>
+    <div class="card card-full" style="margin-bottom:20px;">
+        <div class="alert-list">{risk_html}</div>
+    </div>
+    <div class="section-title">⚠️ Recent Failures</div>
+    <div class="card card-full">
+        <div class="alert-list">{failure_html}</div>
+    </div>
+    <div class="data-source">Data: {stats.get('data_source', 'unknown')}</div>
+    <a href="/" class="desktop-link">Open Full Dashboard →</a>
+    <button class="refresh-btn" onclick="location.reload()">↻</button>
+    <script>
+        let activeCluster = null;
+        function toggleCluster(name) {{
+            const detail = document.getElementById('cluster-' + name);
+            const chips = document.querySelectorAll('.chip');
+            document.querySelectorAll('.cluster-detail').forEach(d => d.style.display = 'none');
+            chips.forEach(c => c.classList.remove('active'));
+            if (activeCluster === name) {{
+                activeCluster = null;
+            }} else {{
+                detail.style.display = 'block';
+                event.target.classList.add('active');
+                activeCluster = name;
+            }}
+        }}
+        setTimeout(()=>location.reload(),60000);
+    </script>
+</body>
+</html>'''
 
 # ============================================================================
 # HTTP Server
@@ -4577,7 +4847,14 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps(DashboardHandler.data_manager.get_stats()).encode())
-            
+        elif parsed.path == '/mobile':
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html')
+            self.end_headers()
+            dm = DashboardHandler.data_manager
+            stats = dm.get_stats()
+            mobile_html = generate_mobile_html(dm, stats)
+            self.wfile.write(mobile_html.encode())
         else:
             self.send_error(404)
     
